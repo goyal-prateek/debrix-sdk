@@ -1,10 +1,13 @@
 # debrix
 
-Open-source instrumentation SDK for [Debrix](https://github.com/goyal-prateek/debrix-sdk) — local-first AI Agent DevTools.
+Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools.
 
 **Status:** alpha (`0.1.0a2`). APIs may change.
 
 Requires the Debrix desktop app running locally to receive traces (OTLP/HTTP on `localhost:4318`).
+
+Public source: [goyal-prateek/debrix-sdk](https://github.com/goyal-prateek/debrix-sdk)  
+(developed in the Debrix monorepo at `packages/sdk-python`, synced via `scripts/publish-sdk.sh`)
 
 ## Install
 
@@ -67,6 +70,8 @@ Nested calls propagate via OpenTelemetry context. On exception, spans are marked
 ## Develop
 
 ```bash
+# from monorepo
+cd packages/sdk-python
 uv sync --group dev
 uv run pytest
 ```
