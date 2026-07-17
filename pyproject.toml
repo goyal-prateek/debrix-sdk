@@ -1,0 +1,47 @@
+[project]
+name = "debrix"
+version = "0.1.0a1"
+description = "Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Prateek Goyal", email = "gprateek015@gmail.com" }]
+keywords = ["observability", "opentelemetry", "agents", "tracing", "debrix"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Debuggers",
+]
+dependencies = [
+  "opentelemetry-api>=1.27.0",
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/goyal-prateek/debrix-sdk"
+Repository = "https://github.com/goyal-prateek/debrix-sdk"
+Issues = "https://github.com/goyal-prateek/debrix-sdk/issues"
+Documentation = "https://github.com/goyal-prateek/debrix-sdk#readme"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/debrix"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
