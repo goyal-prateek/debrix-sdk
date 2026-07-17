@@ -2,7 +2,7 @@
 
 Open-source instrumentation SDK for [Debrix](https://github.com/goyal-prateek/debrix-sdk) — local-first AI Agent DevTools.
 
-**Status:** alpha (`0.1.0a1`). APIs may change.
+**Status:** alpha (`0.1.0a2`). APIs may change.
 
 Requires the Debrix desktop app running locally to receive traces (OTLP/HTTP on `localhost:4318`).
 
