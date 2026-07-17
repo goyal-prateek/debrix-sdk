@@ -1,8 +1,9 @@
 """OTLP/HTTP exporter configuration for Debrix.
 
-Default endpoint: ``http://127.0.0.1:4318`` (OTLP/HTTP protobuf).
-Standard OpenTelemetry environment variables still apply and override defaults
-when set (e.g. ``OTEL_EXPORTER_OTLP_ENDPOINT``).
+Default endpoint comes from ``ports.json`` (canonical: ``packages/ports.json``).
+Override with ``configure(endpoint=...)`` or ``DEBRIX_OTLP_ENDPOINT`` — not the
+shared ``OTEL_EXPORTER_OTLP_ENDPOINT`` (that would also redirect other OTel
+exporters in the same process).
 """
 
 from __future__ import annotations
@@ -19,8 +20,11 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
 
 from debrix.payloads import ensure_worker, flush_payloads, get_capture_mode
+from debrix.ports import DEFAULT_OTLP_ENDPOINT as _DEFAULT_OTLP_ENDPOINT
 
-DEFAULT_OTLP_ENDPOINT: Final = "http://127.0.0.1:4318"
+DEFAULT_OTLP_ENDPOINT: Final = _DEFAULT_OTLP_ENDPOINT
+"""Debrix-only endpoint override (base URL, no ``/v1/traces`` suffix)."""
+ENV_OTLP_ENDPOINT: Final = "DEBRIX_OTLP_ENDPOINT"
 
 logger = logging.getLogger("debrix.config")
 
@@ -31,9 +35,7 @@ _endpoint: str = DEFAULT_OTLP_ENDPOINT
 def _resolved_endpoint(endpoint: str | None = None) -> str:
     if endpoint:
         return endpoint.rstrip("/")
-    return os.environ.get(
-        "OTEL_EXPORTER_OTLP_ENDPOINT", DEFAULT_OTLP_ENDPOINT
-    ).rstrip("/")
+    return os.environ.get(ENV_OTLP_ENDPOINT, DEFAULT_OTLP_ENDPOINT).rstrip("/")
 
 
 def force_flush(timeout_millis: int = 10_000) -> bool:
@@ -63,8 +65,8 @@ def configure(
 
     Args:
         endpoint: OTLP base URL (paths like ``/v1/traces`` are appended by the
-            exporter). Defaults to ``http://127.0.0.1:4318``, or
-            ``OTEL_EXPORTER_OTLP_ENDPOINT`` when set.
+            exporter). Defaults to the Debrix OTLP URL from ``ports.json``, or
+            ``DEBRIX_OTLP_ENDPOINT`` when set.
         service_name: Value for ``service.name`` resource attribute.
         batch: Use ``BatchSpanProcessor`` when True (default); otherwise
             ``SimpleSpanProcessor`` (useful for short-lived scripts).
