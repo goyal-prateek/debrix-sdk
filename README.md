@@ -76,3 +76,12 @@ uv run pytest
 ## License
 
 MIT
+
+## Release
+
+Tag on `main` to publish to PyPI (GitHub Actions):
+
+```bash
+git tag -a v0.1.0a4 -m "debrix 0.1.0a4"
+git push origin v0.1.0a4
+```

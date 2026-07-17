@@ -1,4 +1,4 @@
-"""Listen-port defaults from the packaged copy of ``packages/ports.json``."""
+"""Listen-port defaults from the packaged ``ports.json``."""
 
 from __future__ import annotations
 
