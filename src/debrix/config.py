@@ -1,6 +1,6 @@
 """OTLP/HTTP exporter configuration for Debrix.
 
-Default endpoint comes from ``ports.json`` (canonical: ``packages/ports.json``).
+Default endpoint comes from ``ports.json`` (packaged ``ports.json``).
 Override with ``configure(endpoint=...)`` or ``DEBRIX_OTLP_ENDPOINT`` — not the
 shared ``OTEL_EXPORTER_OTLP_ENDPOINT`` (that would also redirect other OTel
 exporters in the same process).
