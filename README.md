@@ -12,12 +12,6 @@ Requires the Debrix desktop app running locally to receive traces (OTLP/HTTP on 
 pip install debrix
 ```
 
-TestPyPI (pre-release smoke):
-
-```bash
-pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ debrix==0.1.0a1
-```
-
 ## Quick start
 
 ```python
