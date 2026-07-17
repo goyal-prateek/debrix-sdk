@@ -1,10 +1,10 @@
 [project]
 name = "debrix"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{ name = "Prateek Goyal", email = "gprateek015@gmail.com" }]
 keywords = ["observability", "opentelemetry", "agents", "tracing", "debrix"]
 classifiers = [
@@ -12,6 +12,7 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -38,6 +39,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/debrix"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/debrix/ports.json" = "debrix/ports.json"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
