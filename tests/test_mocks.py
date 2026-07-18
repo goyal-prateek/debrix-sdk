@@ -11,7 +11,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
-from debrix import Attr, trace_tool
+from debrix import Attr, Stub, trace_tool
 from debrix.mocks import (
     MockDecision,
     MockError,
@@ -66,7 +66,7 @@ def test_trace_tool_uses_mock(
     spans = list(memory_exporter.get_finished_spans())
     assert len(spans) == 1
     attrs = spans[0].attributes
-    assert attrs[Attr.MOCKED] == "true"
+    assert attrs[Attr.STUB] == Stub.MOCK
     assert json.loads(attrs[Attr.REPLAY_INPUT]) == {"topic": "otlp"}
     assert json.loads(attrs[Attr.REPLAY_OUTPUT]) == "mocked-otlp"
 
@@ -82,7 +82,7 @@ def test_trace_tool_passthrough(
         assert lookup("debrix") == "real:debrix"
 
     attrs = memory_exporter.get_finished_spans()[0].attributes
-    assert Attr.MOCKED not in attrs
+    assert Attr.STUB not in attrs
     assert json.loads(attrs[Attr.REPLAY_OUTPUT]) == "real:debrix"
 
 
@@ -102,7 +102,7 @@ def test_trace_tool_mock_error(
             lookup("otlp")
 
     attrs = memory_exporter.get_finished_spans()[0].attributes
-    assert attrs[Attr.MOCKED] == "true"
+    assert attrs[Attr.STUB] == Stub.MOCK
     out = json.loads(attrs[Attr.REPLAY_OUTPUT])
     assert out["error"] == "timeout"
 
@@ -176,8 +176,7 @@ def test_trace_tool_uses_replay(
 
     assert called["n"] == 0
     attrs = memory_exporter.get_finished_spans()[0].attributes
-    assert attrs[Attr.REPLAYED] == "true"
-    assert Attr.MOCKED not in attrs
+    assert attrs[Attr.STUB] == Stub.REPLAY
     assert json.loads(attrs[Attr.REPLAY_OUTPUT]) == "recorded-otlp"
     assert isinstance(attrs[Attr.REPLAY_SEQUENCE_INDEX], int)
 

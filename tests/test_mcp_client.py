@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
-from debrix import Attr, SpanKind
+from debrix import Attr, SpanKind, Stub
 from debrix.mcp import MockableClient
 from debrix.mocks import MockDecision, MockError, MockToolError, PASSTHROUGH
 
@@ -50,7 +50,7 @@ def test_mockable_client_passthrough(
     span = memory_exporter.get_finished_spans()[0]
     assert span.attributes[Attr.SPAN_KIND] == SpanKind.MCP
     assert span.attributes[Attr.MCP_SERVER] == "demo"
-    assert Attr.MOCKED not in span.attributes
+    assert Attr.STUB not in span.attributes
     assert isinstance(span.attributes[Attr.REPLAY_SEQUENCE_INDEX], int)
 
 
@@ -65,8 +65,7 @@ def test_mockable_client_replay(
     assert out == {"rows": [1]}
     assert inner.calls == []
     span = memory_exporter.get_finished_spans()[0]
-    assert span.attributes[Attr.REPLAYED] == "true"
-    assert Attr.MOCKED not in span.attributes
+    assert span.attributes[Attr.STUB] == Stub.REPLAY
     assert json.loads(span.attributes[Attr.REPLAY_OUTPUT]) == {"rows": [1]}
 
 
@@ -88,7 +87,7 @@ def test_mockable_client_mocks(
     assert kwargs["arguments"] == {"sql": "select 1"}
 
     span = memory_exporter.get_finished_spans()[0]
-    assert span.attributes[Attr.MOCKED] == "true"
+    assert span.attributes[Attr.STUB] == Stub.MOCK
     assert json.loads(span.attributes[Attr.REPLAY_OUTPUT]) == {"rows": []}
 
 
@@ -109,4 +108,6 @@ def test_mockable_client_async_mock(
 
     asyncio.run(_run())
     assert inner.calls == []
-    assert memory_exporter.get_finished_spans()[0].attributes[Attr.MOCKED] == "true"
+    assert (
+        memory_exporter.get_finished_spans()[0].attributes[Attr.STUB] == Stub.MOCK
+    )

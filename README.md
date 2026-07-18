@@ -74,20 +74,27 @@ When the Debrix desktop app is running, `@trace_tool` / `MockableClient` ask
 `POST {otlp}/mocks/resolve` before calling the real function.
 
 - **Tool Mocker:** rules from the app’s **Tool Mocks** panel → `action: mock`
-- **Replay (Mode A):** an armed Observe **Replay** session → `action: replay`
-  (recorded tool tape; LLM stays live)
+- **Replay (Mode A):** armed Observe **Replay** → tools/MCP `action: replay`
+- **Replay (Mode B):** same session with **Tools + LLM**; use `debrix.llm.complete`
+  so pinned LLM calls resolve as `action: replay` (`kind=llm`)
 
 If Debrix is down or times out (~200ms), the SDK **passthrough** to the real
-tool.
+implementation.
 
 ```python
 from debrix.mcp import MockableClient
+from debrix.llm import complete
 
 client = MockableClient(real_mcp_client, server="demo-db")
 result = await client.call_tool("query", {"sql": "select 1"})
+
+answer = complete(
+    messages,
+    call=lambda msgs: my_provider(msgs),  # (content, usage, model)
+)
 ```
 
-Mocked spans set `debrix.mocked=true`; replayed spans set `debrix.replayed=true`.
+Stubbed spans set `debrix.stub` to `mock` (Tool Mocker) or `replay` (Deterministic Replay).
 
 ## Develop
 

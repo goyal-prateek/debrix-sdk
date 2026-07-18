@@ -24,7 +24,7 @@ from debrix.mocks import (
     is_stub_decision,
     resolve_mock,
 )
-from debrix.semconv import Attr, SpanKind
+from debrix.semconv import Attr, SpanKind, Stub
 from debrix.span import DebrixSpan
 
 __all__ = [
@@ -168,9 +168,9 @@ def _record_replay_io_start(span: DebrixSpan, bound: dict[str, Any]) -> None:
 
 def _mark_stub_decision(span: DebrixSpan, decision: MockDecision) -> None:
     if decision.action == "replay":
-        span.set_attribute(Attr.REPLAYED, "true")
+        span.set_attribute(Attr.STUB, Stub.REPLAY)
     else:
-        span.set_attribute(Attr.MOCKED, "true")
+        span.set_attribute(Attr.STUB, Stub.MOCK)
 
 
 def _maybe_mock_tool(

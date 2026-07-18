@@ -7,7 +7,7 @@ app. Change the spec doc first, then keep all three in lockstep.
 
 from __future__ import annotations
 
-__all__ = ["SpanKind", "Attr", "Event", "SPAN_KINDS"]
+__all__ = ["SpanKind", "Stub", "Attr", "Event", "SPAN_KINDS"]
 
 
 class SpanKind:
@@ -21,6 +21,13 @@ class SpanKind:
     EVALUATION = "evaluation"
     HUMAN = "human"
     CUSTOM = "custom"
+
+
+class Stub:
+    """Allowed values for the ``debrix.stub`` attribute."""
+
+    MOCK = "mock"
+    REPLAY = "replay"
 
 
 class Attr:
@@ -54,9 +61,9 @@ class Attr:
     # Status / errors
     ERROR_SUMMARY = "debrix.error.summary"
 
-    # Mock / replay / eval
-    MOCKED = "debrix.mocked"
-    REPLAYED = "debrix.replayed"
+    # Stub source / replay / eval
+    # Values: Stub.MOCK | Stub.REPLAY (mutually exclusive; omit when live).
+    STUB = "debrix.stub"
     REPLAY_INPUT = "debrix.replay.input"
     REPLAY_OUTPUT = "debrix.replay.output"
     REPLAY_SEQUENCE_INDEX = "debrix.replay.sequence_index"
