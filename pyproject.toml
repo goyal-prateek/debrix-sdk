@@ -1,6 +1,6 @@
 [project]
 name = "debrix"
-version = "0.1.0a3"
+version = "0.1.0a4"
 description = "Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools"
 readme = "README.md"
 license = "MIT"

@@ -8,7 +8,7 @@ from debrix.semconv import SPAN_KINDS, Attr, Event, SpanKind, Stub
 from debrix.span import DebrixSpan
 from debrix.tracing import get_tracer, trace_agent, trace_span, trace_tool
 
-__version__ = "0.1.0a3"
+__version__ = "0.1.0a4"
 
 __all__ = [
     "__version__",

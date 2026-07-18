@@ -2,7 +2,7 @@
 
 Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools.
 
-**Status:** alpha (`0.1.0a3`). APIs may change.
+**Status:** alpha (`0.1.0a4`). APIs may change.
 
 Requires the Debrix desktop app running locally to receive traces (OTLP/HTTP on `localhost:17418`).
 
@@ -74,9 +74,10 @@ When the Debrix desktop app is running, `@trace_tool` / `MockableClient` ask
 `POST {otlp}/mocks/resolve` before calling the real function.
 
 - **Tool Mocker:** rules from the app’s **Tool Mocks** panel → `action: mock`
-- **Replay (Mode A):** armed Observe **Replay** → tools/MCP `action: replay`
-- **Replay (Mode B):** same session with **Tools + LLM**; use `debrix.llm.complete`
-  so pinned LLM calls resolve as `action: replay` (`kind=llm`)
+- **Replay (tools only):** armed Observe **Replay** → tools/MCP `action: replay`
+- **Replay (tools + LLM stubs):** same session with **Tools + LLM**; use
+  `debrix.llm.complete` so pinned LLM calls resolve as `action: replay`
+  (`kind=llm`)
 
 If Debrix is down or times out (~200ms), the SDK **passthrough** to the real
 implementation.
