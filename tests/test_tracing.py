@@ -65,6 +65,7 @@ def test_agent_tool_llm_nesting(memory_exporter: InMemorySpanExporter) -> None:
     assert tool.attributes[Attr.TOOL_NAME] == "search"
     assert json.loads(tool.attributes[Attr.REPLAY_INPUT]) == {"query": "hello"}
     assert json.loads(tool.attributes[Attr.REPLAY_OUTPUT]) == "answer:hello"
+    assert tool.attributes[Attr.REPLAY_SEQUENCE_INDEX] == 0
     assert Attr.REPLAY_INPUT not in agent.attributes
     assert llm.attributes[Attr.SPAN_KIND] == SpanKind.LLM
 

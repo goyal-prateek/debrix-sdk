@@ -58,7 +58,7 @@ with trace_agent("planner") as span:
 | `configure()` | Install OTLP/HTTP exporter to Debrix (`:17418`) |
 | `force_flush()` | Flush OTLP spans + pending `/v1/payloads` uploads (call before short scripts exit) |
 | `trace_agent` | Agent boundary (decorator or `with trace_agent("name")`) |
-| `trace_tool` | Tool call span; decorator records replay I/O and consults Tool Mocker |
+| `trace_tool` | Tool call span; records replay I/O + sequence index; consults Tool Mocker / Replay |
 | `trace_span` | Generic / LLM / custom span context manager |
 | `DebrixSpan.record_messages(...)` | Opt-in message payloads |
 | `DebrixSpan.record_response(...)` | Opt-in model output / tokens |
@@ -68,22 +68,33 @@ with trace_agent("planner") as span:
 
 Nested calls propagate via OpenTelemetry context. On exception, spans are marked `ERROR` with `debrix.error.summary`.
 
-## Tool Mocker
+## Tool Mocker & Deterministic Replay
 
-When the Debrix desktop app is running, `@trace_tool` asks
-`POST {otlp}/mocks/resolve` before calling the real function. Rules are edited
-in the app’s **Tool Mocks** panel (name + optional JSON arg subset matchers).
+When the Debrix desktop app is running, `@trace_tool` / `MockableClient` ask
+`POST {otlp}/mocks/resolve` before calling the real function.
+
+- **Tool Mocker:** rules from the app’s **Tool Mocks** panel → `action: mock`
+- **Replay (Mode A):** armed Observe **Replay** → tools/MCP `action: replay`
+- **Replay (Mode B):** same session with **Tools + LLM**; use `debrix.llm.complete`
+  so pinned LLM calls resolve as `action: replay` (`kind=llm`)
+
 If Debrix is down or times out (~200ms), the SDK **passthrough** to the real
-tool.
+implementation.
 
 ```python
 from debrix.mcp import MockableClient
+from debrix.llm import complete
 
 client = MockableClient(real_mcp_client, server="demo-db")
 result = await client.call_tool("query", {"sql": "select 1"})
+
+answer = complete(
+    messages,
+    call=lambda msgs: my_provider(msgs),  # (content, usage, model)
+)
 ```
 
-Mocked spans set `debrix.mocked=true` and appear with a **mocked** badge in Observe.
+Stubbed spans set `debrix.stub` to `mock` (Tool Mocker) or `replay` (Deterministic Replay).
 
 ## Develop
 

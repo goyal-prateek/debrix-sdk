@@ -44,5 +44,10 @@ def pytest_configure() -> None:
 def memory_exporter() -> InMemorySpanExporter:
     assert _exporter is not None
     _exporter.clear()
+    # Reset agent-scoped replay sequence so tests don't leak indices.
+    from debrix.tracing import _REPLAY_SEQUENCE
+
+    token = _REPLAY_SEQUENCE.set(0)
     yield _exporter
+    _REPLAY_SEQUENCE.reset(token)
     _exporter.clear()

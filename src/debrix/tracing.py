@@ -7,6 +7,7 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, ParamSpec, TypeVar, cast, overload
 
 import opentelemetry.context as otel_context
@@ -16,12 +17,14 @@ from opentelemetry.trace import Tracer
 
 from debrix.config import configure
 from debrix.mocks import (
+    MockDecision,
     MockToolError,
     apply_mock_decision,
     apply_mock_decision_async,
+    is_stub_decision,
     resolve_mock,
 )
-from debrix.semconv import Attr, SpanKind
+from debrix.semconv import Attr, SpanKind, Stub
 from debrix.span import DebrixSpan
 
 __all__ = [
@@ -30,6 +33,7 @@ __all__ = [
     "trace_span",
     "get_tracer",
     "current_agent_name",
+    "next_replay_sequence_index",
 ]
 
 P = ParamSpec("P")
@@ -38,12 +42,21 @@ R = TypeVar("R")
 _TRACER_NAME = "debrix"
 _SKIP_BOUND_PARAMS = frozenset({"self", "cls"})
 _AGENT_NAME_KEY = otel_context.create_key("debrix.agent.name")
+# Agent-scoped tool/MCP sequence for deterministic replay tapes.
+_REPLAY_SEQUENCE: ContextVar[int] = ContextVar("debrix.replay.sequence", default=0)
 
 
 def current_agent_name() -> str | None:
     """Return the nearest enclosing ``trace_agent`` name, if any."""
     value = otel_context.get_value(_AGENT_NAME_KEY)
     return value if isinstance(value, str) and value else None
+
+
+def next_replay_sequence_index() -> int:
+    """Allocate the next ``debrix.replay.sequence_index`` in this context."""
+    idx = _REPLAY_SEQUENCE.get()
+    _REPLAY_SEQUENCE.set(idx + 1)
+    return idx
 
 
 def get_tracer() -> Tracer:
@@ -121,11 +134,14 @@ def trace_span(
     span = get_tracer().start_span(name, attributes=attrs)
     token = _attach_span(span)
     agent_token: object | None = None
+    seq_token = None
     if kind == SpanKind.AGENT:
         agent_name = attrs.get(Attr.AGENT_NAME) or name
         agent_token = otel_context.attach(
             otel_context.set_value(_AGENT_NAME_KEY, agent_name)
         )
+        # Reset tool/MCP sequence for each agent boundary.
+        seq_token = _REPLAY_SEQUENCE.set(0)
     wrapper = DebrixSpan(span)
     exc: BaseException | None = None
     try:
@@ -137,9 +153,24 @@ def trace_span(
         if exc is not None:
             wrapper.record_exception(exc)
         span.end()
+        if seq_token is not None:
+            _REPLAY_SEQUENCE.reset(seq_token)
         if agent_token is not None:
             _detach_token(agent_token)
         _detach_token(token)
+
+
+def _record_replay_io_start(span: DebrixSpan, bound: dict[str, Any]) -> None:
+    """Write replay input + sequence index before the tool/MCP call."""
+    span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
+    span.set_attribute(Attr.REPLAY_SEQUENCE_INDEX, next_replay_sequence_index())
+
+
+def _mark_stub_decision(span: DebrixSpan, decision: MockDecision) -> None:
+    if decision.action == "replay":
+        span.set_attribute(Attr.STUB, Stub.REPLAY)
+    else:
+        span.set_attribute(Attr.STUB, Stub.MOCK)
 
 
 def _maybe_mock_tool(
@@ -147,8 +178,8 @@ def _maybe_mock_tool(
     span_name: str,
     span_kind: str,
     bound_args: dict[str, Any],
-) -> Any | None:
-    """Return a mock decision when this is a tool span; else ``None`` (no mock check)."""
+) -> MockDecision | None:
+    """Return a mock/replay decision when this is a tool span; else ``None``."""
     if span_kind != SpanKind.TOOL:
         return None
     return resolve_mock(kind="tool", name=span_name, arguments=bound_args)
@@ -174,14 +205,15 @@ def _wrap_function(
                 )
                 if capture_io:
                     # Record input before the call so failures still keep args.
-                    span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
+                    _record_replay_io_start(span, bound)
                 decision = _maybe_mock_tool(
                     span_name=span_name,
                     span_kind=span_kind,
                     bound_args=bound,
                 )
-                if decision is not None and decision.action == "mock":
-                    span.set_attribute(Attr.MOCKED, "true")
+                if is_stub_decision(decision):
+                    assert decision is not None
+                    _mark_stub_decision(span, decision)
                     try:
                         result = await apply_mock_decision_async(decision)
                     except MockToolError as exc:
@@ -217,14 +249,15 @@ def _wrap_function(
         with trace_span(span_name, kind=span_kind, attributes=attributes) as span:
             bound = _bind_arguments(fn, args, kwargs) if capture_io else {}
             if capture_io:
-                span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
+                _record_replay_io_start(span, bound)
             decision = _maybe_mock_tool(
                 span_name=span_name,
                 span_kind=span_kind,
                 bound_args=bound,
             )
-            if decision is not None and decision.action == "mock":
-                span.set_attribute(Attr.MOCKED, "true")
+            if is_stub_decision(decision):
+                assert decision is not None
+                _mark_stub_decision(span, decision)
                 try:
                     result = apply_mock_decision(decision)
                 except MockToolError as exc:

@@ -42,9 +42,9 @@ class MockError:
 
 @dataclass(frozen=True)
 class MockDecision:
-    """Outcome of a mock resolve call."""
+    """Outcome of a mock / replay resolve call."""
 
-    action: str  # "passthrough" | "mock"
+    action: str  # "passthrough" | "mock" | "replay"
     delay_ms: int | None = None
     result: Any = None
     error: MockError | None = None
@@ -52,6 +52,8 @@ class MockDecision:
 
 
 PASSTHROUGH = MockDecision(action="passthrough")
+
+_STUB_ACTIONS = frozenset({"mock", "replay"})
 
 
 class MockToolError(RuntimeError):
@@ -112,7 +114,7 @@ def resolve_mock(
     if not isinstance(payload, dict):
         return PASSTHROUGH
     action = payload.get("action")
-    if action != "mock":
+    if action not in _STUB_ACTIONS:
         return PASSTHROUGH
 
     delay_raw = payload.get("delay_ms")
@@ -125,7 +127,7 @@ def resolve_mock(
             message=err_raw.get("message") if isinstance(err_raw.get("message"), str) else None,
         )
     return MockDecision(
-        action="mock",
+        action=str(action),
         delay_ms=delay_ms,
         result=payload.get("result"),
         error=error,
@@ -136,7 +138,7 @@ def resolve_mock(
 def apply_mock_decision(decision: MockDecision) -> Any:
     """Apply delay / error / fixed result. Raises ``MockToolError`` on error modes.
 
-    Callers must only invoke this when ``decision.action == "mock"``.
+    Callers must only invoke this when ``decision.action`` is ``mock`` or ``replay``.
     """
     if decision.delay_ms and decision.delay_ms > 0:
         time.sleep(decision.delay_ms / 1000.0)
@@ -154,3 +156,8 @@ async def apply_mock_decision_async(decision: MockDecision) -> Any:
     if decision.error is not None:
         raise MockToolError(decision.error.kind, decision.error.message)
     return decision.result
+
+
+def is_stub_decision(decision: MockDecision | None) -> bool:
+    """True when the decision short-circuits the real tool/MCP call."""
+    return decision is not None and decision.action in _STUB_ACTIONS
