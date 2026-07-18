@@ -133,3 +133,79 @@ def test_resolve_parses_mock_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     assert d.action == "mock"
     assert d.result == "x"
     assert d.rule_id == "r1"
+
+
+def test_resolve_parses_replay_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "action": "replay",
+                    "result": "recorded",
+                }
+            ).encode()
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "debrix.mocks.urllib.request.urlopen",
+        lambda *a, **k: _Resp(),
+    )
+    d = resolve_mock(kind="tool", name="lookup", arguments={"topic": "a"})
+    assert d.action == "replay"
+    assert d.result == "recorded"
+
+
+def test_trace_tool_uses_replay(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    called = {"n": 0}
+
+    @trace_tool(name="lookup")
+    def lookup(topic: str) -> str:
+        called["n"] += 1
+        return f"real:{topic}"
+
+    fake = MockDecision(action="replay", result="recorded-otlp")
+    with patch("debrix.tracing.resolve_mock", return_value=fake):
+        assert lookup("otlp") == "recorded-otlp"
+
+    assert called["n"] == 0
+    attrs = memory_exporter.get_finished_spans()[0].attributes
+    assert attrs[Attr.REPLAYED] == "true"
+    assert Attr.MOCKED not in attrs
+    assert json.loads(attrs[Attr.REPLAY_OUTPUT]) == "recorded-otlp"
+    assert isinstance(attrs[Attr.REPLAY_SEQUENCE_INDEX], int)
+
+
+def test_trace_tool_sequence_index_increments(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    from debrix import trace_agent
+
+    @trace_tool(name="a")
+    def tool_a() -> str:
+        return "a"
+
+    @trace_tool(name="b")
+    def tool_b() -> str:
+        return "b"
+
+    @trace_agent(name="seq_agent")
+    def run() -> None:
+        with patch("debrix.tracing.resolve_mock", return_value=PASSTHROUGH):
+            tool_a()
+            tool_b()
+            tool_a()
+
+    run()
+    by_name: dict[str, list[object]] = {}
+    for span in memory_exporter.get_finished_spans():
+        by_name.setdefault(span.name, []).append(span)
+    assert by_name["a"][0].attributes[Attr.REPLAY_SEQUENCE_INDEX] == 0
+    assert by_name["b"][0].attributes[Attr.REPLAY_SEQUENCE_INDEX] == 1
+    assert by_name["a"][1].attributes[Attr.REPLAY_SEQUENCE_INDEX] == 2

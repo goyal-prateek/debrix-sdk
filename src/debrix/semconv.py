@@ -56,6 +56,7 @@ class Attr:
 
     # Mock / replay / eval
     MOCKED = "debrix.mocked"
+    REPLAYED = "debrix.replayed"
     REPLAY_INPUT = "debrix.replay.input"
     REPLAY_OUTPUT = "debrix.replay.output"
     REPLAY_SEQUENCE_INDEX = "debrix.replay.sequence_index"

@@ -15,10 +15,16 @@ from debrix.mocks import (
     _json_safe,
     apply_mock_decision,
     apply_mock_decision_async,
+    is_stub_decision,
     resolve_mock,
 )
 from debrix.semconv import Attr, SpanKind
-from debrix.tracing import _dumps_replay, trace_span
+from debrix.tracing import (
+    _dumps_replay,
+    _mark_stub_decision,
+    _record_replay_io_start,
+    trace_span,
+)
 
 __all__ = ["MockableClient"]
 
@@ -92,7 +98,7 @@ class MockableClient:
             attrs[Attr.MCP_TOOL] = name
 
         with trace_span(name, kind=SpanKind.MCP, attributes=attrs) as span:
-            span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(args))
+            _record_replay_io_start(span, args)
             decision = resolve_mock(
                 kind="mcp",
                 name=name,
@@ -100,8 +106,8 @@ class MockableClient:
                 server=server,
                 endpoint=self._endpoint,
             )
-            if decision.action == "mock":
-                span.set_attribute(Attr.MOCKED, "true")
+            if is_stub_decision(decision):
+                _mark_stub_decision(span, decision)
                 try:
                     result = apply_mock_decision(decision)
                 except MockToolError as exc:
@@ -140,7 +146,7 @@ class MockableClient:
             attrs[Attr.MCP_TOOL] = name
 
         with trace_span(name, kind=SpanKind.MCP, attributes=attrs) as span:
-            span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(args))
+            _record_replay_io_start(span, args)
             decision = resolve_mock(
                 kind="mcp",
                 name=name,
@@ -148,8 +154,8 @@ class MockableClient:
                 server=server,
                 endpoint=self._endpoint,
             )
-            if decision.action == "mock":
-                span.set_attribute(Attr.MOCKED, "true")
+            if is_stub_decision(decision):
+                _mark_stub_decision(span, decision)
                 try:
                     result = await apply_mock_decision_async(decision)
                 except MockToolError as exc:

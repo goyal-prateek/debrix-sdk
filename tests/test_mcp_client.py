@@ -51,6 +51,23 @@ def test_mockable_client_passthrough(
     assert span.attributes[Attr.SPAN_KIND] == SpanKind.MCP
     assert span.attributes[Attr.MCP_SERVER] == "demo"
     assert Attr.MOCKED not in span.attributes
+    assert isinstance(span.attributes[Attr.REPLAY_SEQUENCE_INDEX], int)
+
+
+def test_mockable_client_replay(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    inner = _FakeInner()
+    client = MockableClient(inner, server="demo")
+    fake = MockDecision(action="replay", result={"rows": [1]})
+    with patch("debrix.mcp.resolve_mock", return_value=fake):
+        out = client.call_tool("query", {"sql": "select 1"})
+    assert out == {"rows": [1]}
+    assert inner.calls == []
+    span = memory_exporter.get_finished_spans()[0]
+    assert span.attributes[Attr.REPLAYED] == "true"
+    assert Attr.MOCKED not in span.attributes
+    assert json.loads(span.attributes[Attr.REPLAY_OUTPUT]) == {"rows": [1]}
 
 
 def test_mockable_client_mocks(
