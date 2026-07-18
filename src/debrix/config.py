@@ -38,6 +38,13 @@ def _resolved_endpoint(endpoint: str | None = None) -> str:
     return os.environ.get(ENV_OTLP_ENDPOINT, DEFAULT_OTLP_ENDPOINT).rstrip("/")
 
 
+def get_otlp_endpoint() -> str:
+    """Return the active Debrix OTLP base URL (no path suffix)."""
+    if _configured and _endpoint:
+        return _endpoint.rstrip("/")
+    return _resolved_endpoint()
+
+
 def force_flush(timeout_millis: int = 10_000) -> bool:
     """Flush OTLP spans and pending conversation payload uploads.
 

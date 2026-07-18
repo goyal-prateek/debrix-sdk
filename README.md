@@ -58,13 +58,32 @@ with trace_agent("planner") as span:
 | `configure()` | Install OTLP/HTTP exporter to Debrix (`:17418`) |
 | `force_flush()` | Flush OTLP spans + pending `/v1/payloads` uploads (call before short scripts exit) |
 | `trace_agent` | Agent boundary (decorator or `with trace_agent("name")`) |
-| `trace_tool` | Tool call span; decorator records `debrix.replay.input` / `output` |
+| `trace_tool` | Tool call span; decorator records replay I/O and consults Tool Mocker |
 | `trace_span` | Generic / LLM / custom span context manager |
 | `DebrixSpan.record_messages(...)` | Opt-in message payloads |
 | `DebrixSpan.record_response(...)` | Opt-in model output / tokens |
+| `MockableClient` | Opt-in MCP client wrapper for Tool Mocker (`debrix.mcp`) |
+| `MockToolError` | Raised when a mock rule returns error/timeout |
 | `SpanKind`, `Attr` | Semantic convention constants |
 
 Nested calls propagate via OpenTelemetry context. On exception, spans are marked `ERROR` with `debrix.error.summary`.
+
+## Tool Mocker
+
+When the Debrix desktop app is running, `@trace_tool` asks
+`POST {otlp}/mocks/resolve` before calling the real function. Rules are edited
+in the app’s **Tool Mocks** panel (name + optional JSON arg subset matchers).
+If Debrix is down or times out (~200ms), the SDK **passthrough** to the real
+tool.
+
+```python
+from debrix.mcp import MockableClient
+
+client = MockableClient(real_mcp_client, server="demo-db")
+result = await client.call_tool("query", {"sql": "select 1"})
+```
+
+Mocked spans set `debrix.mocked=true` and appear with a **mocked** badge in Observe.
 
 ## Develop
 

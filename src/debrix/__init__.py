@@ -1,6 +1,8 @@
 """Debrix — open-source instrumentation SDK for AI agents."""
 
 from debrix.config import configure, force_flush
+from debrix.mcp import MockableClient
+from debrix.mocks import MockToolError
 from debrix.semconv import SPAN_KINDS, Attr, Event, SpanKind
 from debrix.span import DebrixSpan
 from debrix.tracing import get_tracer, trace_agent, trace_span, trace_tool
@@ -20,4 +22,6 @@ __all__ = [
     "trace_agent",
     "trace_tool",
     "trace_span",
+    "MockableClient",
+    "MockToolError",
 ]

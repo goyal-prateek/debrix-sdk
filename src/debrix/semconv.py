@@ -54,7 +54,7 @@ class Attr:
     # Status / errors
     ERROR_SUMMARY = "debrix.error.summary"
 
-    # Mock / replay / eval (reserved for later phases)
+    # Mock / replay / eval
     MOCKED = "debrix.mocked"
     REPLAY_INPUT = "debrix.replay.input"
     REPLAY_OUTPUT = "debrix.replay.output"

@@ -15,6 +15,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import Tracer
 
 from debrix.config import configure
+from debrix.mocks import (
+    MockToolError,
+    apply_mock_decision,
+    apply_mock_decision_async,
+    resolve_mock,
+)
 from debrix.semconv import Attr, SpanKind
 from debrix.span import DebrixSpan
 
@@ -136,6 +142,18 @@ def trace_span(
         _detach_token(token)
 
 
+def _maybe_mock_tool(
+    *,
+    span_name: str,
+    span_kind: str,
+    bound_args: dict[str, Any],
+) -> Any | None:
+    """Return a mock decision when this is a tool span; else ``None`` (no mock check)."""
+    if span_kind != SpanKind.TOOL:
+        return None
+    return resolve_mock(kind="tool", name=span_name, arguments=bound_args)
+
+
 def _wrap_function(
     fn: Callable[P, R],
     *,
@@ -151,14 +169,38 @@ def _wrap_function(
             with trace_span(
                 span_name, kind=span_kind, attributes=attributes
             ) as span:
+                bound = (
+                    _bind_arguments(fn, args, kwargs) if capture_io else {}
+                )
                 if capture_io:
                     # Record input before the call so failures still keep args.
-                    span.set_attribute(
-                        Attr.REPLAY_INPUT,
-                        _dumps_replay(
-                            _bind_arguments(fn, args, kwargs)
-                        ),
-                    )
+                    span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
+                decision = _maybe_mock_tool(
+                    span_name=span_name,
+                    span_kind=span_kind,
+                    bound_args=bound,
+                )
+                if decision is not None and decision.action == "mock":
+                    span.set_attribute(Attr.MOCKED, "true")
+                    try:
+                        result = await apply_mock_decision_async(decision)
+                    except MockToolError as exc:
+                        if capture_io:
+                            span.set_attribute(
+                                Attr.REPLAY_OUTPUT,
+                                _dumps_replay(
+                                    {
+                                        "error": exc.kind,
+                                        "message": exc.message,
+                                    }
+                                ),
+                            )
+                        raise
+                    if capture_io:
+                        span.set_attribute(
+                            Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                        )
+                    return result
                 result = await cast(Callable[..., Awaitable[Any]], fn)(
                     *args, **kwargs
                 )
@@ -173,11 +215,35 @@ def _wrap_function(
     @functools.wraps(fn)
     def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         with trace_span(span_name, kind=span_kind, attributes=attributes) as span:
+            bound = _bind_arguments(fn, args, kwargs) if capture_io else {}
             if capture_io:
-                span.set_attribute(
-                    Attr.REPLAY_INPUT,
-                    _dumps_replay(_bind_arguments(fn, args, kwargs)),
-                )
+                span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
+            decision = _maybe_mock_tool(
+                span_name=span_name,
+                span_kind=span_kind,
+                bound_args=bound,
+            )
+            if decision is not None and decision.action == "mock":
+                span.set_attribute(Attr.MOCKED, "true")
+                try:
+                    result = apply_mock_decision(decision)
+                except MockToolError as exc:
+                    if capture_io:
+                        span.set_attribute(
+                            Attr.REPLAY_OUTPUT,
+                            _dumps_replay(
+                                {
+                                    "error": exc.kind,
+                                    "message": exc.message,
+                                }
+                            ),
+                        )
+                    raise
+                if capture_io:
+                    span.set_attribute(
+                        Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                    )
+                return cast(R, result)
             result = fn(*args, **kwargs)
             if capture_io:
                 span.set_attribute(Attr.REPLAY_OUTPUT, _dumps_replay(result))
