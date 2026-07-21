@@ -36,6 +36,7 @@ class Attr:
     # Identity
     SPAN_KIND = "debrix.span.kind"
     AGENT_NAME = "debrix.agent.name"
+    AGENT_ARGUMENTS = "debrix.agent.arguments"
     TOOL_NAME = "debrix.tool.name"
     MCP_SERVER = "debrix.mcp.server"
     MCP_TOOL = "debrix.mcp.tool"

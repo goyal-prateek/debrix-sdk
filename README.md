@@ -46,10 +46,15 @@ force_flush()  # flush OTLP *and* conversation payload uploads before exit
 Decorators also work as context managers:
 
 ```python
-with trace_agent("planner") as span:
+with trace_agent("planner", arguments={"query": "hello"}) as span:
     with trace_tool("lookup"):
         ...
 ```
+
+`@trace_agent` automatically records its bound function arguments, including
+defaults, on `debrix.agent.arguments`. Context-managed agents can attach the
+same JSON-safe field explicitly with `arguments={...}`. Agent return values are
+not captured.
 
 ## Public API
 
@@ -57,7 +62,7 @@ with trace_agent("planner") as span:
 | ------ | ------- |
 | `configure()` | Install OTLP/HTTP exporter to Debrix (`:17418`) |
 | `force_flush()` | Flush OTLP spans + pending `/v1/payloads` uploads (call before short scripts exit) |
-| `trace_agent` | Agent boundary (decorator or `with trace_agent("name")`) |
+| `trace_agent` | Agent boundary; decorators capture bound arguments, context managers accept `arguments={...}` |
 | `trace_tool` | Tool call span; records replay I/O + sequence index; consults Tool Mocker / Replay |
 | `trace_span` | Generic / LLM / custom span context manager |
 | `DebrixSpan.record_messages(...)` | Opt-in message payloads |
@@ -65,6 +70,10 @@ with trace_agent("planner") as span:
 | `MockableClient` | Opt-in MCP client wrapper for Tool Mocker (`debrix.mcp`) |
 | `MockToolError` | Raised when a mock rule returns error/timeout |
 | `SpanKind`, `Attr` | Semantic convention constants |
+
+Calling `record_messages` or `record_response` stores the complete payload
+locally in Debrix. Bounded previews remain on the span for fast inspection;
+there are no partial or disabled capture modes.
 
 Nested calls propagate via OpenTelemetry context. On exception, spans are marked `ERROR` with `debrix.error.summary`.
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import atexit
 import gzip
 import hashlib
-import json
 import logging
 import os
 import queue
@@ -19,8 +18,6 @@ from typing import Any, Literal
 from opentelemetry.trace import SpanContext
 
 logger = logging.getLogger("debrix.payloads")
-
-CaptureMode = Literal["full", "preview", "off"]
 
 DEFAULT_MAX_PAYLOAD_BYTES = 209_715_200  # ~200 MiB
 DEFAULT_PREVIEW_CHARS = 4096
@@ -43,23 +40,6 @@ _worker_lock = threading.Lock()
 _atexit_registered = False
 
 
-def get_capture_mode() -> CaptureMode:
-    env = os.environ.get("DEBRIX_CAPTURE_MESSAGES", "").strip().lower()
-    if env in ("full", "preview", "off"):
-        return env  # type: ignore[return-value]
-    # Desktop Memory tab writes settings.json next to the app DB.
-    for candidate in _settings_candidates():
-        try:
-            with open(candidate, encoding="utf-8") as f:
-                data = json.load(f)
-            mode = str(data.get("captureMessages", "")).lower()
-            if mode in ("full", "preview", "off"):
-                return mode  # type: ignore[return-value]
-        except (OSError, json.JSONDecodeError, TypeError):
-            continue
-    return "full"
-
-
 def get_max_payload_bytes() -> int:
     raw = os.environ.get("DEBRIX_MAX_PAYLOAD_BYTES")
     if raw:
@@ -78,21 +58,6 @@ def get_preview_chars() -> int:
         except ValueError:
             pass
     return DEFAULT_PREVIEW_CHARS
-
-
-def _settings_candidates() -> list[str]:
-    home = os.path.expanduser("~")
-    return [
-        os.environ.get("DEBRIX_SETTINGS_PATH", ""),
-        os.path.join(
-            home,
-            "Library",
-            "Application Support",
-            "com.debrix.app",
-            "settings.json",
-        ),
-        os.path.join(home, ".debrix", "settings.json"),
-    ]
 
 
 def sha256_hex(data: bytes) -> str:

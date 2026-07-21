@@ -13,7 +13,6 @@ from debrix.payloads import (
     build_messages_preview,
     build_response_preview,
     ensure_worker,
-    get_capture_mode,
     get_preview_chars,
     sha256_hex,
 )
@@ -106,10 +105,6 @@ class DebrixSpan:
         The span receives preview + stats + ``blob_ref`` immediately so the
         agent thread never waits on disk/network for large prompts.
         """
-        mode = get_capture_mode()
-        if mode == "off":
-            return
-
         normalized = _normalize_messages(messages)
         preview_chars = get_preview_chars()
         preview, truncated = build_messages_preview(normalized, preview_chars)
@@ -124,14 +119,6 @@ class DebrixSpan:
         self._span.set_attribute(Attr.MESSAGES_COUNT, len(normalized))
         self._span.set_attribute(Attr.MESSAGES_TRUNCATED, truncated)
 
-        if mode == "preview":
-            # Compat: also set legacy inline attribute to the preview.
-            self._span.set_attribute(
-                Attr.MESSAGES, json.dumps(preview, separators=(",", ":"))
-            )
-            return
-
-        # full capture
         blob_ref = f"sha256:{digest}"
         self._span.set_attribute(Attr.MESSAGES_BLOB_REF, blob_ref)
         # Small payloads: also keep legacy inline for older UIs / offline Debrix.
@@ -172,10 +159,6 @@ class DebrixSpan:
             raise TypeError(
                 f"response must be a mapping, got {type(response).__name__}"
             )
-        mode = get_capture_mode()
-        if mode == "off":
-            return
-
         payload = dict(response)
         preview_chars = get_preview_chars()
         preview, truncated = build_response_preview(payload, preview_chars)
@@ -188,12 +171,6 @@ class DebrixSpan:
         self._span.set_attribute(Attr.RESPONSE_BYTES, len(body))
         self._span.set_attribute(Attr.RESPONSE_CHARS, len(body.decode("utf-8")))
         self._span.set_attribute(Attr.RESPONSE_TRUNCATED, truncated)
-
-        if mode == "preview":
-            self._span.set_attribute(
-                Attr.RESPONSE, json.dumps(preview, separators=(",", ":"))
-            )
-            return
 
         blob_ref = f"sha256:{digest}"
         self._span.set_attribute(Attr.RESPONSE_BLOB_REF, blob_ref)
