@@ -166,6 +166,14 @@ def _record_replay_io_start(span: DebrixSpan, bound: dict[str, Any]) -> None:
     span.set_attribute(Attr.REPLAY_SEQUENCE_INDEX, next_replay_sequence_index())
 
 
+def _record_agent_arguments(
+    span: DebrixSpan,
+    arguments: Mapping[str, Any],
+) -> None:
+    """Record JSON-safe arguments on an agent span."""
+    span.set_attribute(Attr.AGENT_ARGUMENTS, _dumps_replay(dict(arguments)))
+
+
 def _mark_stub_decision(span: DebrixSpan, decision: MockDecision) -> None:
     if decision.action == "replay":
         span.set_attribute(Attr.STUB, Stub.REPLAY)
@@ -192,6 +200,7 @@ def _wrap_function(
     span_kind: str,
     attributes: dict[str, str],
     capture_io: bool = False,
+    capture_arguments: bool = False,
 ) -> Callable[P, R]:
     if inspect.iscoroutinefunction(fn):
 
@@ -201,8 +210,12 @@ def _wrap_function(
                 span_name, kind=span_kind, attributes=attributes
             ) as span:
                 bound = (
-                    _bind_arguments(fn, args, kwargs) if capture_io else {}
+                    _bind_arguments(fn, args, kwargs)
+                    if capture_io or capture_arguments
+                    else {}
                 )
+                if capture_arguments:
+                    _record_agent_arguments(span, bound)
                 if capture_io:
                     # Record input before the call so failures still keep args.
                     _record_replay_io_start(span, bound)
@@ -247,7 +260,13 @@ def _wrap_function(
     @functools.wraps(fn)
     def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         with trace_span(span_name, kind=span_kind, attributes=attributes) as span:
-            bound = _bind_arguments(fn, args, kwargs) if capture_io else {}
+            bound = (
+                _bind_arguments(fn, args, kwargs)
+                if capture_io or capture_arguments
+                else {}
+            )
+            if capture_arguments:
+                _record_agent_arguments(span, bound)
             if capture_io:
                 _record_replay_io_start(span, bound)
             decision = _maybe_mock_tool(
@@ -292,6 +311,8 @@ def _instrument(
     func: Callable[..., Any] | None,
     name: str | None,
     capture_io: bool = False,
+    capture_arguments: bool = False,
+    context_arguments: Mapping[str, Any] | None = None,
 ) -> Any:
     """Shared implementation for ``trace_agent`` / ``trace_tool``.
 
@@ -311,6 +332,8 @@ def _instrument(
                 kind=span_kind,
                 attributes={identity_key: span_name},
             ) as span:
+                if context_arguments is not None:
+                    _record_agent_arguments(span, context_arguments)
                 yield span
 
         return cm()
@@ -323,6 +346,7 @@ def _instrument(
             span_kind=span_kind,
             attributes={identity_key: span_name},
             capture_io=capture_io,
+            capture_arguments=capture_arguments,
         )
 
     if func is not None:
@@ -335,7 +359,12 @@ def trace_agent(func: Callable[P, R], /) -> Callable[P, R]: ...
 
 
 @overload
-def trace_agent(name: str, /) -> Any: ...
+def trace_agent(
+    name: str,
+    /,
+    *,
+    arguments: Mapping[str, Any] | None = None,
+) -> Any: ...
 
 
 @overload
@@ -352,6 +381,7 @@ def trace_agent(
     /,
     *,
     name: str | None = None,
+    arguments: Mapping[str, Any] | None = None,
 ) -> Any:
     """Instrument an agent boundary.
 
@@ -363,15 +393,27 @@ def trace_agent(
         @trace_agent(name="planner")
         def run(): ...
 
-        with trace_agent("planner") as span:
+        with trace_agent(
+            "planner",
+            arguments={"task": "inspect"},
+        ) as span:
             ...
     """
+    if arguments is not None:
+        if not isinstance(func, str):
+            raise TypeError(
+                "arguments is only supported by the trace_agent context manager"
+            )
+        if not isinstance(arguments, Mapping):
+            raise TypeError("arguments must be a mapping")
+
     return _instrument(
         span_kind=SpanKind.AGENT,
         identity_key=Attr.AGENT_NAME,
         func=func,
         name=name,
-        capture_io=False,
+        capture_arguments=True,
+        context_arguments=arguments,
     )
 
 

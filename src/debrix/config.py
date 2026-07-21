@@ -19,7 +19,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
 
-from debrix.payloads import ensure_worker, flush_payloads, get_capture_mode
+from debrix.payloads import ensure_worker, flush_payloads
 from debrix.ports import DEFAULT_OTLP_ENDPOINT as _DEFAULT_OTLP_ENDPOINT
 
 DEFAULT_OTLP_ENDPOINT: Final = _DEFAULT_OTLP_ENDPOINT
@@ -92,7 +92,7 @@ def configure(
     # Ensure env protocol matches our contract when unset.
     os.environ.setdefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 
-    if not batch and get_capture_mode() == "full":
+    if not batch:
         warnings.warn(
             "debrix.configure(batch=False) with full message capture may block "
             "the agent on span end while large exports flush; prefer batch=True "

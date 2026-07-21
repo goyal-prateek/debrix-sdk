@@ -67,6 +67,9 @@ def test_agent_tool_llm_nesting(memory_exporter: InMemorySpanExporter) -> None:
     assert json.loads(tool.attributes[Attr.REPLAY_OUTPUT]) == "answer:hello"
     assert tool.attributes[Attr.REPLAY_SEQUENCE_INDEX] == 0
     assert Attr.REPLAY_INPUT not in agent.attributes
+    assert json.loads(agent.attributes[Attr.AGENT_ARGUMENTS]) == {
+        "query": "hello"
+    }
     assert llm.attributes[Attr.SPAN_KIND] == SpanKind.LLM
 
     assert tool.parent is not None
@@ -182,19 +185,74 @@ def test_trace_tool_skips_self_and_repr_non_json(
     assert json.loads(span.attributes[Attr.REPLAY_OUTPUT]) == "Box('x')"
 
 
+def test_trace_agent_records_all_bound_arguments(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    @trace_agent(name="coordinator")
+    def coordinate(
+        query: str,
+        count: int = 2,
+        *labels: str,
+        enabled: bool = True,
+        **metadata: object,
+    ) -> str:
+        return query
+
+    assert coordinate(
+        "inspect",
+        3,
+        "urgent",
+        "delegated",
+        enabled=False,
+        owner="debugger",
+    ) == "inspect"
+
+    span = memory_exporter.get_finished_spans()[0]
+    assert json.loads(span.attributes[Attr.AGENT_ARGUMENTS]) == {
+        "query": "inspect",
+        "count": 3,
+        "labels": ["urgent", "delegated"],
+        "enabled": False,
+        "metadata": {"owner": "debugger"},
+    }
+    assert Attr.REPLAY_INPUT not in span.attributes
+    assert Attr.REPLAY_OUTPUT not in span.attributes
+
+
+def test_trace_agent_records_arguments_before_failure(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    @trace_agent(name="failing_agent")
+    def fail(task: str, *, attempt: int = 1) -> None:
+        raise RuntimeError("agent failed")
+
+    with pytest.raises(RuntimeError, match="agent failed"):
+        fail("inspect", attempt=2)
+
+    span = memory_exporter.get_finished_spans()[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert json.loads(span.attributes[Attr.AGENT_ARGUMENTS]) == {
+        "task": "inspect",
+        "attempt": 2,
+    }
+
+
 def test_async_decorators(memory_exporter: InMemorySpanExporter) -> None:
     @trace_agent(name="async_agent")
-    async def run() -> str:
-        return await tool()
+    async def run(query: str) -> str:
+        return f"{query}:{await tool()}"
 
     @trace_tool
     async def tool() -> str:
         return "ok"
 
-    assert asyncio.run(run()) == "ok"
+    assert asyncio.run(run("inspect")) == "inspect:ok"
     by_name = _by_name(memory_exporter)
     assert "async_agent" in by_name
     assert "tool" in by_name
+    assert json.loads(
+        by_name["async_agent"].attributes[Attr.AGENT_ARGUMENTS]
+    ) == {"query": "inspect"}
     assert (
         by_name["tool"].parent.span_id
         == by_name["async_agent"].context.span_id
@@ -221,18 +279,30 @@ def test_bare_and_named_decorators(
 
 
 def test_context_manager_forms(memory_exporter: InMemorySpanExporter) -> None:
-    with trace_agent("planner") as agent_span:
+    with trace_agent(
+        "planner",
+        arguments={"query": "inspect", "attempt": 2},
+    ) as agent_span:
         agent_span.set_attribute("custom.key", "v")
         with trace_tool("lookup") as tool_span:
             tool_span.record_messages([{"role": "user", "content": "q"}])
 
     by_name = _by_name(memory_exporter)
     assert by_name["planner"].attributes[Attr.SPAN_KIND] == SpanKind.AGENT
+    assert json.loads(by_name["planner"].attributes[Attr.AGENT_ARGUMENTS]) == {
+        "query": "inspect",
+        "attempt": 2,
+    }
     assert by_name["lookup"].attributes[Attr.SPAN_KIND] == SpanKind.TOOL
     assert (
         by_name["lookup"].parent.span_id
         == by_name["planner"].context.span_id
     )
+
+
+def test_trace_agent_context_rejects_non_mapping_arguments() -> None:
+    with pytest.raises(TypeError, match="arguments must be a mapping"):
+        trace_agent("planner", arguments=["not", "a", "mapping"])
 
 
 def test_trace_span_default_kind_is_custom(

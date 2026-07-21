@@ -5,7 +5,6 @@ from __future__ import annotations
 import gzip
 import http.server
 import json
-import os
 import threading
 import time
 from typing import Any
@@ -22,7 +21,6 @@ from debrix.payloads import (
     PayloadWorker,
     build_messages_preview,
     build_response_preview,
-    get_capture_mode,
     reset_worker_for_tests,
     sha256_hex,
 )
@@ -49,7 +47,6 @@ def test_record_messages_sets_preview_and_blob_ref(
     memory_exporter: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "full")
     reset_worker_for_tests()
 
     with trace_span("llm", kind=SpanKind.LLM) as span:
@@ -73,7 +70,6 @@ def test_record_response_sets_preview_and_blob_ref(
     memory_exporter: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "full")
     reset_worker_for_tests()
 
     with trace_span("llm", kind=SpanKind.LLM) as span:
@@ -98,11 +94,9 @@ def test_record_response_sets_preview_and_blob_ref(
     assert ready[0].attributes[Attr.PAYLOAD_BLOB_REF] == attrs[Attr.RESPONSE_BLOB_REF]
 
 
-def test_preview_mode_skips_blob_ref(
+def test_record_messages_and_response_always_capture_full_payloads(
     memory_exporter: InMemorySpanExporter,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "preview")
     reset_worker_for_tests()
 
     with trace_span("llm", kind=SpanKind.LLM) as span:
@@ -110,39 +104,16 @@ def test_preview_mode_skips_blob_ref(
         span.record_response({"content": "yo"})
 
     attrs = memory_exporter.get_finished_spans()[0].attributes
+    assert Attr.MESSAGES_BLOB_REF in attrs
     assert Attr.MESSAGES_PREVIEW in attrs
-    assert Attr.MESSAGES_BLOB_REF not in attrs
-    assert Attr.MESSAGES in attrs
+    assert Attr.RESPONSE_BLOB_REF in attrs
     assert Attr.RESPONSE_PREVIEW in attrs
-    assert Attr.RESPONSE_BLOB_REF not in attrs
-    assert Attr.RESPONSE in attrs
-    events = memory_exporter.get_finished_spans()[0].events
-    assert not any(e.name == Event.PAYLOAD_READY for e in events)
-
-
-def test_off_mode_records_nothing(
-    memory_exporter: InMemorySpanExporter,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "off")
-    reset_worker_for_tests()
-
-    with trace_span("llm", kind=SpanKind.LLM) as span:
-        span.record_messages([{"role": "user", "content": "hi"}])
-        span.record_response({"content": "yo"})
-
-    attrs = memory_exporter.get_finished_spans()[0].attributes
-    assert Attr.MESSAGES not in attrs
-    assert Attr.MESSAGES_PREVIEW not in attrs
-    assert Attr.RESPONSE not in attrs
-    assert Attr.RESPONSE_PREVIEW not in attrs
 
 
 def test_over_cap_sets_capture_error_without_raising(
     memory_exporter: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "full")
     monkeypatch.setenv("DEBRIX_MAX_PAYLOAD_BYTES", "50")
     reset_worker_for_tests()
 
@@ -266,7 +237,6 @@ def test_payload_upload_includes_agent_name_from_trace_agent(
     memory_exporter: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "full")
     reset_worker_for_tests()
     jobs: list[PayloadJob] = []
 
@@ -291,20 +261,3 @@ def test_payload_upload_includes_agent_name_from_trace_agent(
     assert all(j.agent_name == "research_agent" for j in jobs)
     # silence unused fixture lint — exporter still needed for tracer setup
     assert memory_exporter.get_finished_spans()
-
-
-def test_get_capture_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEBRIX_CAPTURE_MESSAGES", "preview")
-    assert get_capture_mode() == "preview"
-    monkeypatch.delenv("DEBRIX_CAPTURE_MESSAGES", raising=False)
-    # Without settings file, default full
-    if not any(
-        os.path.isfile(p)
-        for p in [
-            os.path.expanduser(
-                "~/Library/Application Support/com.debrix.app/settings.json"
-            ),
-            os.path.expanduser("~/.debrix/settings.json"),
-        ]
-    ):
-        assert get_capture_mode() == "full"
