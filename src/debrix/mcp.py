@@ -105,6 +105,7 @@ class MockableClient:
                 arguments=_json_safe(args),
                 server=server,
                 endpoint=self._endpoint,
+                trace_id=span.trace_id_hex,
             )
             if is_stub_decision(decision):
                 _mark_stub_decision(span, decision)
@@ -153,6 +154,7 @@ class MockableClient:
                 arguments=_json_safe(args),
                 server=server,
                 endpoint=self._endpoint,
+                trace_id=span.trace_id_hex,
             )
             if is_stub_decision(decision):
                 _mark_stub_decision(span, decision)

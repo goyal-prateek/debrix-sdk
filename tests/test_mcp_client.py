@@ -87,6 +87,7 @@ def test_mockable_client_mocks(
     assert kwargs["arguments"] == {"sql": "select 1"}
 
     span = memory_exporter.get_finished_spans()[0]
+    assert kwargs["trace_id"] == format(span.context.trace_id, "032x")
     assert span.attributes[Attr.STUB] == Stub.MOCK
     assert json.loads(span.attributes[Attr.REPLAY_OUTPUT]) == {"rows": []}
 

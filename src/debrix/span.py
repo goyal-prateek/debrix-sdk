@@ -95,6 +95,11 @@ class DebrixSpan:
         """Underlying OpenTelemetry span."""
         return self._span
 
+    @property
+    def trace_id_hex(self) -> str:
+        """Lowercase 32-character OpenTelemetry trace ID for internal requests."""
+        return _trace_id_hex(self._span)
+
     def record_messages(
         self,
         messages: Sequence[Mapping[str, Any]],

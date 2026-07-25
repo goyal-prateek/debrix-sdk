@@ -186,11 +186,17 @@ def _maybe_mock_tool(
     span_name: str,
     span_kind: str,
     bound_args: dict[str, Any],
+    trace_id: str,
 ) -> MockDecision | None:
     """Return a mock/replay decision when this is a tool span; else ``None``."""
     if span_kind != SpanKind.TOOL:
         return None
-    return resolve_mock(kind="tool", name=span_name, arguments=bound_args)
+    return resolve_mock(
+        kind="tool",
+        name=span_name,
+        arguments=bound_args,
+        trace_id=trace_id,
+    )
 
 
 def _wrap_function(
@@ -223,6 +229,7 @@ def _wrap_function(
                     span_name=span_name,
                     span_kind=span_kind,
                     bound_args=bound,
+                    trace_id=span.trace_id_hex,
                 )
                 if is_stub_decision(decision):
                     assert decision is not None
@@ -273,6 +280,7 @@ def _wrap_function(
                 span_name=span_name,
                 span_kind=span_kind,
                 bound_args=bound,
+                trace_id=span.trace_id_hex,
             )
             if is_stub_decision(decision):
                 assert decision is not None

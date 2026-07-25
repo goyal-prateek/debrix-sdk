@@ -71,6 +71,7 @@ def resolve_mock(
     name: str,
     arguments: dict[str, Any] | None = None,
     server: str | None = None,
+    trace_id: str | None = None,
     endpoint: str | None = None,
     timeout: float = _RESOLVE_TIMEOUT_S,
 ) -> MockDecision:
@@ -89,6 +90,8 @@ def resolve_mock(
     }
     if server:
         body["server"] = server
+    if trace_id:
+        body["trace_id"] = trace_id
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         url,

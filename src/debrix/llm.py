@@ -90,6 +90,7 @@ def complete(
             name=name,
             arguments={"messages": msg_list},
             endpoint=endpoint,
+            trace_id=span.trace_id_hex,
         )
         if is_stub_decision(decision):
             _mark_stub_decision(span, decision)
