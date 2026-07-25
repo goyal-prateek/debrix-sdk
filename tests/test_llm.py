@@ -28,7 +28,7 @@ def test_complete_replay_short_circuits(
         action="replay",
         result={"content": "recorded", "model": "tape", "usage": {}},
     )
-    with patch("debrix.llm.resolve_mock", return_value=fake):
+    with patch("debrix.llm.resolve_mock", return_value=fake) as resolve:
         out = complete(
             [{"role": "user", "content": "hi"}],
             call=live,
@@ -36,6 +36,9 @@ def test_complete_replay_short_circuits(
     assert out == "recorded"
     assert called["n"] == 0
     span = memory_exporter.get_finished_spans()[0]
+    assert resolve.call_args.kwargs["trace_id"] == format(
+        span.context.trace_id, "032x"
+    )
     assert span.attributes[Attr.SPAN_KIND] == SpanKind.LLM
     assert span.attributes[Attr.STUB] == Stub.REPLAY
     assert isinstance(span.attributes[Attr.REPLAY_SEQUENCE_INDEX], int)

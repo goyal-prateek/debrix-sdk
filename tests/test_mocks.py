@@ -59,13 +59,16 @@ def test_trace_tool_uses_mock(
         return f"real:{topic}"
 
     fake = MockDecision(action="mock", result="mocked-otlp")
-    with patch("debrix.tracing.resolve_mock", return_value=fake):
+    with patch("debrix.tracing.resolve_mock", return_value=fake) as resolve:
         assert lookup("otlp") == "mocked-otlp"
 
     assert called["n"] == 0
     spans = list(memory_exporter.get_finished_spans())
     assert len(spans) == 1
     attrs = spans[0].attributes
+    assert resolve.call_args.kwargs["trace_id"] == format(
+        spans[0].context.trace_id, "032x"
+    )
     assert attrs[Attr.STUB] == Stub.MOCK
     assert json.loads(attrs[Attr.REPLAY_INPUT]) == {"topic": "otlp"}
     assert json.loads(attrs[Attr.REPLAY_OUTPUT]) == "mocked-otlp"
@@ -108,6 +111,8 @@ def test_trace_tool_mock_error(
 
 
 def test_resolve_parses_mock_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
     class _Resp:
         def read(self) -> bytes:
             return json.dumps(
@@ -125,14 +130,21 @@ def test_resolve_parses_mock_payload(monkeypatch: pytest.MonkeyPatch) -> None:
         def __exit__(self, *args: object) -> None:
             return None
 
-    monkeypatch.setattr(
-        "debrix.mocks.urllib.request.urlopen",
-        lambda *a, **k: _Resp(),
+    def _open(request: Any, **_: Any) -> _Resp:
+        captured.update(json.loads(request.data.decode()))
+        return _Resp()
+
+    monkeypatch.setattr("debrix.mocks.urllib.request.urlopen", _open)
+    d = resolve_mock(
+        kind="tool",
+        name="lookup",
+        arguments={"topic": "a"},
+        trace_id="0123456789abcdef0123456789abcdef",
     )
-    d = resolve_mock(kind="tool", name="lookup", arguments={"topic": "a"})
     assert d.action == "mock"
     assert d.result == "x"
     assert d.rule_id == "r1"
+    assert captured["trace_id"] == "0123456789abcdef0123456789abcdef"
 
 
 def test_resolve_parses_replay_payload(monkeypatch: pytest.MonkeyPatch) -> None:
