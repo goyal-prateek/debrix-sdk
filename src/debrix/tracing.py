@@ -5,8 +5,15 @@ from __future__ import annotations
 import functools
 import inspect
 import json
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any, ParamSpec, TypeVar, cast, overload
 
@@ -16,6 +23,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import Tracer
 
 from debrix.config import configure
+from debrix.control import ControlInvoke
 from debrix.mocks import (
     MockDecision,
     MockToolError,
@@ -24,8 +32,23 @@ from debrix.mocks import (
     is_stub_decision,
     resolve_mock,
 )
+from debrix.runtime_control import (
+    apply_runtime_control,
+    apply_runtime_invoke,
+    capture_bound_call,
+    mark_live_span,
+    resolve_runtime_control,
+    resolve_runtime_control_async,
+)
 from debrix.semconv import Attr, SpanKind, Stub
 from debrix.span import DebrixSpan
+from debrix.verification import (
+    check_boundary_async,
+    check_boundary_sync,
+    prepare_span_async,
+    prepare_span_sync,
+    reset_span_context,
+)
 
 __all__ = [
     "trace_agent",
@@ -144,7 +167,9 @@ def trace_span(
         seq_token = _REPLAY_SEQUENCE.set(0)
     wrapper = DebrixSpan(span)
     exc: BaseException | None = None
+    verification_token = None
     try:
+        verification_token = prepare_span_sync(wrapper)
         yield wrapper
     except BaseException as e:
         exc = e
@@ -157,13 +182,59 @@ def trace_span(
             _REPLAY_SEQUENCE.reset(seq_token)
         if agent_token is not None:
             _detach_token(agent_token)
+        reset_span_context(verification_token)
         _detach_token(token)
 
 
-def _record_replay_io_start(span: DebrixSpan, bound: dict[str, Any]) -> None:
+@asynccontextmanager
+async def _trace_span_async(
+    name: str,
+    *,
+    kind: str = SpanKind.CUSTOM,
+    attributes: dict[str, str] | None = None,
+) -> AsyncIterator[DebrixSpan]:
+    """Async internal equivalent that does not block during verification bind."""
+
+    attrs: dict[str, str] = {Attr.SPAN_KIND: kind}
+    if attributes:
+        attrs.update(attributes)
+    span = get_tracer().start_span(name, attributes=attrs)
+    token = _attach_span(span)
+    agent_token: object | None = None
+    seq_token = None
+    if kind == SpanKind.AGENT:
+        agent_name = attrs.get(Attr.AGENT_NAME) or name
+        agent_token = otel_context.attach(
+            otel_context.set_value(_AGENT_NAME_KEY, agent_name)
+        )
+        seq_token = _REPLAY_SEQUENCE.set(0)
+    wrapper = DebrixSpan(span)
+    exc: BaseException | None = None
+    verification_token = None
+    try:
+        verification_token = await prepare_span_async(wrapper)
+        yield wrapper
+    except BaseException as error:
+        exc = error
+        raise
+    finally:
+        if exc is not None:
+            wrapper.record_exception(exc)
+        span.end()
+        if seq_token is not None:
+            _REPLAY_SEQUENCE.reset(seq_token)
+        if agent_token is not None:
+            _detach_token(agent_token)
+        reset_span_context(verification_token)
+        _detach_token(token)
+
+
+def _record_replay_io_start(span: DebrixSpan, bound: dict[str, Any]) -> int:
     """Write replay input + sequence index before the tool/MCP call."""
+    sequence_index = next_replay_sequence_index()
     span.set_attribute(Attr.REPLAY_INPUT, _dumps_replay(bound))
-    span.set_attribute(Attr.REPLAY_SEQUENCE_INDEX, next_replay_sequence_index())
+    span.set_attribute(Attr.REPLAY_SEQUENCE_INDEX, sequence_index)
+    return sequence_index
 
 
 def _record_agent_arguments(
@@ -207,24 +278,181 @@ def _wrap_function(
     attributes: dict[str, str],
     capture_io: bool = False,
     capture_arguments: bool = False,
+    input_schema: Mapping[str, Any] | None = None,
 ) -> Callable[P, R]:
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Any:
-            with trace_span(
+            async with _trace_span_async(
                 span_name, kind=span_kind, attributes=attributes
             ) as span:
+                captured_call = (
+                    capture_bound_call(
+                        fn, args, kwargs, json_schema=input_schema
+                    )
+                    if capture_io and span_kind == SpanKind.TOOL
+                    else None
+                )
                 bound = (
-                    _bind_arguments(fn, args, kwargs)
+                    captured_call.recorded_input
+                    if captured_call is not None
+                    else _bind_arguments(fn, args, kwargs)
                     if capture_io or capture_arguments
                     else {}
                 )
                 if capture_arguments:
                     _record_agent_arguments(span, bound)
+                sequence_index: int | None = None
                 if capture_io:
                     # Record input before the call so failures still keep args.
-                    _record_replay_io_start(span, bound)
+                    sequence_index = _record_replay_io_start(span, bound)
+                    if captured_call is not None:
+                        span.set_attribute(
+                            Attr.REPLAY_INPUT_DESCRIPTOR,
+                            _dumps_replay(captured_call.descriptor),
+                        )
+                managed = (
+                    await check_boundary_async(span)
+                    if span_kind == SpanKind.TOOL and sequence_index is not None
+                    else False
+                )
+                if not managed:
+                    mark_live_span(span)
+                if span_kind == SpanKind.TOOL and sequence_index is not None:
+                    if not managed:
+                        controlled = await resolve_runtime_control_async(
+                            span,
+                            operation_kind="tool",
+                            operation_name=span_name,
+                            operation_server=None,
+                            agent_scope=current_agent_name(),
+                            sequence_index=sequence_index,
+                            input_value=bound,
+                            input_descriptor=(
+                                captured_call.descriptor
+                                if captured_call is not None
+                                else None
+                            ),
+                        )
+                        if isinstance(controlled, ControlInvoke):
+                            invoke_args, invoke_kwargs = apply_runtime_invoke(
+                                span, controlled, captured_call
+                            )
+                            result = await cast(
+                                Callable[..., Awaitable[Any]], fn
+                            )(*invoke_args, **invoke_kwargs)
+                            span.set_attribute(
+                                Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                            )
+                            return result
+                        handled, result = apply_runtime_control(
+                            span, controlled
+                        )
+                        if handled:
+                            return result
+                if not managed:
+                    decision = _maybe_mock_tool(
+                        span_name=span_name,
+                        span_kind=span_kind,
+                        bound_args=bound,
+                        trace_id=span.trace_id_hex,
+                    )
+                    if is_stub_decision(decision):
+                        assert decision is not None
+                        _mark_stub_decision(span, decision)
+                        try:
+                            result = await apply_mock_decision_async(decision)
+                        except MockToolError as exc:
+                            if capture_io:
+                                span.set_attribute(
+                                    Attr.REPLAY_OUTPUT,
+                                    _dumps_replay(
+                                        {
+                                            "error": exc.kind,
+                                            "message": exc.message,
+                                        }
+                                    ),
+                                )
+                            raise
+                        if capture_io:
+                            span.set_attribute(
+                                Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                            )
+                        return result
+                result = await cast(Callable[..., Awaitable[Any]], fn)(
+                    *args, **kwargs
+                )
+                if capture_io:
+                    span.set_attribute(
+                        Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                    )
+                return result
+
+        return cast(Callable[P, R], async_wrapper)
+
+    @functools.wraps(fn)
+    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        with trace_span(span_name, kind=span_kind, attributes=attributes) as span:
+            captured_call = (
+                capture_bound_call(fn, args, kwargs, json_schema=input_schema)
+                if capture_io and span_kind == SpanKind.TOOL
+                else None
+            )
+            bound = (
+                captured_call.recorded_input
+                if captured_call is not None
+                else _bind_arguments(fn, args, kwargs)
+                if capture_io or capture_arguments
+                else {}
+            )
+            if capture_arguments:
+                _record_agent_arguments(span, bound)
+            sequence_index: int | None = None
+            if capture_io:
+                sequence_index = _record_replay_io_start(span, bound)
+                if captured_call is not None:
+                    span.set_attribute(
+                        Attr.REPLAY_INPUT_DESCRIPTOR,
+                        _dumps_replay(captured_call.descriptor),
+                    )
+            managed = (
+                check_boundary_sync(span)
+                if span_kind == SpanKind.TOOL and sequence_index is not None
+                else False
+            )
+            if not managed:
+                mark_live_span(span)
+            if span_kind == SpanKind.TOOL and sequence_index is not None:
+                if not managed:
+                    controlled = resolve_runtime_control(
+                        span,
+                        operation_kind="tool",
+                        operation_name=span_name,
+                        operation_server=None,
+                        agent_scope=current_agent_name(),
+                        sequence_index=sequence_index,
+                        input_value=bound,
+                        input_descriptor=(
+                            captured_call.descriptor
+                            if captured_call is not None
+                            else None
+                        ),
+                    )
+                    if isinstance(controlled, ControlInvoke):
+                        invoke_args, invoke_kwargs = apply_runtime_invoke(
+                            span, controlled, captured_call
+                        )
+                        result = fn(*invoke_args, **invoke_kwargs)
+                        if capture_io:
+                            span.set_attribute(
+                                Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                            )
+                        return cast(R, result)
+                    handled, result = apply_runtime_control(span, controlled)
+                    if handled:
+                        return cast(R, result)
+            if not managed:
                 decision = _maybe_mock_tool(
                     span_name=span_name,
                     span_kind=span_kind,
@@ -235,7 +463,7 @@ def _wrap_function(
                     assert decision is not None
                     _mark_stub_decision(span, decision)
                     try:
-                        result = await apply_mock_decision_async(decision)
+                        result = apply_mock_decision(decision)
                     except MockToolError as exc:
                         if capture_io:
                             span.set_attribute(
@@ -252,58 +480,7 @@ def _wrap_function(
                         span.set_attribute(
                             Attr.REPLAY_OUTPUT, _dumps_replay(result)
                         )
-                    return result
-                result = await cast(Callable[..., Awaitable[Any]], fn)(
-                    *args, **kwargs
-                )
-                if capture_io:
-                    span.set_attribute(
-                        Attr.REPLAY_OUTPUT, _dumps_replay(result)
-                    )
-                return result
-
-        return cast(Callable[P, R], async_wrapper)
-
-    @functools.wraps(fn)
-    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        with trace_span(span_name, kind=span_kind, attributes=attributes) as span:
-            bound = (
-                _bind_arguments(fn, args, kwargs)
-                if capture_io or capture_arguments
-                else {}
-            )
-            if capture_arguments:
-                _record_agent_arguments(span, bound)
-            if capture_io:
-                _record_replay_io_start(span, bound)
-            decision = _maybe_mock_tool(
-                span_name=span_name,
-                span_kind=span_kind,
-                bound_args=bound,
-                trace_id=span.trace_id_hex,
-            )
-            if is_stub_decision(decision):
-                assert decision is not None
-                _mark_stub_decision(span, decision)
-                try:
-                    result = apply_mock_decision(decision)
-                except MockToolError as exc:
-                    if capture_io:
-                        span.set_attribute(
-                            Attr.REPLAY_OUTPUT,
-                            _dumps_replay(
-                                {
-                                    "error": exc.kind,
-                                    "message": exc.message,
-                                }
-                            ),
-                        )
-                    raise
-                if capture_io:
-                    span.set_attribute(
-                        Attr.REPLAY_OUTPUT, _dumps_replay(result)
-                    )
-                return cast(R, result)
+                    return cast(R, result)
             result = fn(*args, **kwargs)
             if capture_io:
                 span.set_attribute(Attr.REPLAY_OUTPUT, _dumps_replay(result))
@@ -321,6 +498,7 @@ def _instrument(
     capture_io: bool = False,
     capture_arguments: bool = False,
     context_arguments: Mapping[str, Any] | None = None,
+    input_schema: Mapping[str, Any] | None = None,
 ) -> Any:
     """Shared implementation for ``trace_agent`` / ``trace_tool``.
 
@@ -355,6 +533,7 @@ def _instrument(
             attributes={identity_key: span_name},
             capture_io=capture_io,
             capture_arguments=capture_arguments,
+            input_schema=input_schema,
         )
 
     if func is not None:
@@ -422,6 +601,7 @@ def trace_agent(
         name=name,
         capture_arguments=True,
         context_arguments=arguments,
+        input_schema=None,
     )
 
 
@@ -439,6 +619,7 @@ def trace_tool(
     /,
     *,
     name: str | None = None,
+    input_schema: Mapping[str, Any] | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
@@ -447,6 +628,7 @@ def trace_tool(
     /,
     *,
     name: str | None = None,
+    input_schema: Mapping[str, Any] | None = None,
 ) -> Any:
     """Instrument a tool call.
 
@@ -473,4 +655,5 @@ def trace_tool(
         func=func,
         name=name,
         capture_io=True,
+        input_schema=input_schema,
     )

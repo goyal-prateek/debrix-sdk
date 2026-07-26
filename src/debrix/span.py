@@ -27,34 +27,32 @@ ALLOWED_MESSAGE_ROLES: frozenset[str] = frozenset(
 
 def _normalize_messages(
     messages: Sequence[Mapping[str, Any]],
-) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
     for i, msg in enumerate(messages):
         if not isinstance(msg, Mapping):
             raise TypeError(
                 f"messages[{i}] must be a mapping, got {type(msg).__name__}"
             )
+        if any(not isinstance(key, str) for key in msg):
+            raise TypeError(f"messages[{i}] keys must be strings")
         role = msg.get("role")
-        content = msg.get("content")
-        if not isinstance(role, str) or role not in ALLOWED_MESSAGE_ROLES:
+        if not isinstance(role, str) or not role.strip():
             raise ValueError(
-                f"messages[{i}].role must be one of "
-                f"{sorted(ALLOWED_MESSAGE_ROLES)}, got {role!r}"
+                f"messages[{i}].role must be a non-empty string"
             )
-        if not isinstance(content, str):
+        try:
+            encoded = json.dumps(
+                dict(msg),
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            entry = json.loads(encoded)
+        except (TypeError, ValueError) as error:
             raise TypeError(
-                f"messages[{i}].content must be a str, "
-                f"got {type(content).__name__}"
-            )
-        entry: dict[str, str] = {"role": role, "content": content}
-        name = msg.get("name")
-        if name is not None:
-            if not isinstance(name, str):
-                raise TypeError(
-                    f"messages[{i}].name must be a str when provided, "
-                    f"got {type(name).__name__}"
-                )
-            entry["name"] = name
+                f"messages[{i}] must be losslessly JSON-compatible"
+            ) from error
         normalized.append(entry)
     return normalized
 
@@ -99,6 +97,18 @@ class DebrixSpan:
     def trace_id_hex(self) -> str:
         """Lowercase 32-character OpenTelemetry trace ID for internal requests."""
         return _trace_id_hex(self._span)
+
+    @property
+    def span_id_hex(self) -> str:
+        """Lowercase 16-character OpenTelemetry span ID for control requests."""
+        return format(self._span.get_span_context().span_id, "016x")
+
+    @property
+    def parent_span_id_hex(self) -> str | None:
+        """Parent span ID when this span was created inside another span."""
+        parent = getattr(self._span, "parent", None)
+        span_id = getattr(parent, "span_id", 0)
+        return format(span_id, "016x") if span_id else None
 
     def record_messages(
         self,

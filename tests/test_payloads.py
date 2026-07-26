@@ -66,6 +66,57 @@ def test_record_messages_sets_preview_and_blob_ref(
     assert ready[0].attributes[Attr.PAYLOAD_BLOB_REF] == attrs[Attr.MESSAGES_BLOB_REF]
 
 
+def test_record_messages_preserves_provider_specific_roles_and_fields(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    reset_worker_for_tests()
+    messages = [
+        {
+            "role": "developer",
+            "content": "Use the approved tools.",
+            "metadata": {"priority": 2, "tags": ["policy"]},
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "function": {"name": "lookup", "arguments": {"query": "Paris"}},
+                }
+            ],
+        },
+        {
+            "role": "provider_custom",
+            "content": [{"type": "text", "text": "structured"}],
+        },
+    ]
+
+    with trace_span("llm", kind=SpanKind.LLM) as span:
+        span.record_messages(messages)
+
+    attrs = memory_exporter.get_finished_spans()[0].attributes
+    assert json.loads(attrs[Attr.MESSAGES]) == messages
+    assert json.loads(attrs[Attr.MESSAGES_PREVIEW]) == messages
+
+
+@pytest.mark.parametrize(
+    "message,match",
+    [
+        ({"role": "", "content": "x"}, "role must be a non-empty string"),
+        ({"role": "user", "content": object()}, "JSON-compatible"),
+        ({1: "not a string key", "role": "user"}, "keys must be strings"),
+    ],
+)
+def test_record_messages_rejects_non_lossless_entries(
+    message: dict[Any, Any],
+    match: str,
+) -> None:
+    with trace_span("llm", kind=SpanKind.LLM) as span:
+        with pytest.raises((TypeError, ValueError), match=match):
+            span.record_messages([message])
+
+
 def test_record_response_sets_preview_and_blob_ref(
     memory_exporter: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
