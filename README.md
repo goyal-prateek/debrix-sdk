@@ -69,6 +69,8 @@ not captured.
 | `DebrixSpan.record_response(...)` | Opt-in model output / tokens |
 | `MockableClient` | Opt-in MCP client wrapper for Tool Mocker (`debrix.mcp`) |
 | `MockToolError` | Raised when a mock rule returns error/timeout |
+| `DebrixControlError`, `DebrixControlProtocolError`, `DebrixBreakpointCancelled`, `DebrixControlLost` | Typed fail-closed controlled-branch errors |
+| `DebrixVerificationError`, `DebrixVerificationConfigurationError`, `DebrixVerificationProtocolError`, `DebrixVerificationRejected`, `DebrixVerificationControlLost` | Typed managed no-override verification errors |
 | `SpanKind`, `Attr` | Semantic convention constants |
 
 Calling `record_messages` or `record_response` stores the complete payload
@@ -93,7 +95,7 @@ implementation.
 
 ```python
 from debrix.mcp import MockableClient
-from debrix.llm import complete
+from debrix.llm import acomplete, complete
 
 client = MockableClient(real_mcp_client, server="demo-db")
 result = await client.call_tool("query", {"sql": "select 1"})
@@ -102,9 +104,60 @@ answer = complete(
     messages,
     call=lambda msgs: my_provider(msgs),  # (content, usage, model)
 )
+
+answer = await acomplete(
+    messages,
+    call=my_async_provider,  # async (messages) -> (content, usage, model)
+)
 ```
 
 Stubbed spans set `debrix.stub` to `mock` (Tool Mocker) or `replay` (Deterministic Replay).
+
+When a Debrix FW v2 branch is armed, `@trace_tool`, `MockableClient`,
+`complete`, and `acomplete` check the fail-closed control channel before
+ordinary mocks. Tool/MCP boundaries support controlled input, result, and
+error decisions. A message breakpoint calls the provider exactly once with
+the recorded or edited complete message list. A model-output breakpoint
+returns the recorded or edited complete response without calling the
+provider. Once Debrix claims a call, cancellation or connection loss raises a
+typed control exception instead of silently running unmanaged.
+
+## Managed no-override verification
+
+Debrix FW v3 verifies the real project change through the existing
+instrumented application. Starting a fix verification or regression rerun in
+Debrix Desktop/MCP returns one attempt ID and one opaque token in this launch
+environment:
+
+```text
+DEBRIX_VERIFICATION_ATTEMPT_ID=verification_…
+DEBRIX_VERIFICATION_TOKEN=<one-time opaque capability>
+```
+
+Pass both values only to the next approved project-owned invocation. Do not
+print, persist, trace, or copy the token into an artifact. No later public read
+can recover the token. If the launch context is lost, cancel the durable
+attempt and start a new one.
+
+No extra SDK function starts the run. The first root `trace_agent` or
+`trace_span` in that process automatically binds exactly one trace through
+`debrix.verification.v1`. The managed context then:
+
+- bypasses controlled branches, Tool Mocker, and Deterministic Replay before
+  they can affect supported Tool/MCP/LLM boundaries;
+- adds attempt, purpose, protocol, root-span, and no-override provenance but
+  never the token;
+- checks the local verification service fail-closed for sync and `asyncio`
+  paths; and
+- raises a typed verification error instead of falling through to diagnostic
+  behavior when binding is rejected, the protocol is incompatible, or control
+  is lost after binding.
+
+The user or coding agent still chooses and invokes the existing project
+command. Debrix does not execute tests, state predicates, judges, application
+commands, or stored regression recipes. Call `force_flush()` before a
+short-lived managed process exits so its trace and payload evidence can be
+finalized.
 
 ## Develop
 

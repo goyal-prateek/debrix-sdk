@@ -117,7 +117,7 @@ def test_record_messages_rejects_bad_role(
 ) -> None:
     with trace_span("bad") as span:
         with pytest.raises(ValueError, match="role"):
-            span.record_messages([{"role": "system_prompt", "content": "x"}])
+            span.record_messages([{"role": "", "content": "x"}])
 
 
 def test_exception_sets_error_status_and_summary(

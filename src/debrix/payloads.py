@@ -73,15 +73,17 @@ def truncate_text(text: str, budget: int) -> tuple[str, bool]:
 
 
 def build_messages_preview(
-    messages: list[dict[str, str]], preview_chars: int
-) -> tuple[list[dict[str, str]], bool]:
+    messages: list[dict[str, Any]], preview_chars: int
+) -> tuple[list[dict[str, Any]], bool]:
     truncated = False
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for msg in messages:
         entry = dict(msg)
-        content, was = truncate_text(entry.get("content", ""), preview_chars)
-        entry["content"] = content
-        truncated = truncated or was
+        content = entry.get("content")
+        if isinstance(content, str):
+            shortened, was = truncate_text(content, preview_chars)
+            entry["content"] = shortened
+            truncated = truncated or was
         out.append(entry)
     return out, truncated
 

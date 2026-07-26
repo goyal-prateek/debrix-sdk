@@ -66,9 +66,25 @@ class Attr:
     # Values: Stub.MOCK | Stub.REPLAY (mutually exclusive; omit when live).
     STUB = "debrix.stub"
     REPLAY_INPUT = "debrix.replay.input"
+    REPLAY_INPUT_DESCRIPTOR = "debrix.replay.input_descriptor"
     REPLAY_OUTPUT = "debrix.replay.output"
     REPLAY_SEQUENCE_INDEX = "debrix.replay.sequence_index"
     EVAL_SOURCE_TRACE_ID = "debrix.eval.source_trace_id"
+
+    # FW v2 controlled-branch runtime provenance.
+    CONTROL_BRANCH_ID = "debrix.control.branch_id"
+    CONTROL_ATTEMPT_ID = "debrix.control.attempt_id"
+    CONTROL_OCCURRENCE_ID = "debrix.control.occurrence_id"
+    CONTROL_PROVENANCE = "debrix.control.provenance"
+    CONTROL_INPUT_PROVENANCE = "debrix.control.input_provenance"
+    CONTROL_RESULT_PROVENANCE = "debrix.control.result_provenance"
+
+    # FW v3 managed no-override verification provenance.
+    VERIFICATION_ATTEMPT_ID = "debrix.verification.attempt_id"
+    VERIFICATION_PURPOSE = "debrix.verification.purpose"
+    VERIFICATION_PROTOCOL_VERSION = "debrix.verification.protocol_version"
+    VERIFICATION_ROOT_SPAN_ID = "debrix.verification.root_span_id"
+    VERIFICATION_NO_OVERRIDES = "debrix.verification.no_overrides"
 
     PAYLOAD_KIND = "debrix.payload.kind"
     PAYLOAD_BLOB_REF = "debrix.payload.blob_ref"

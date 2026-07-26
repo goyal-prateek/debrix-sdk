@@ -49,6 +49,12 @@ def test_attribute_keys_use_debrix_prefix() -> None:
         assert key.startswith("debrix."), key
 
 
+def test_input_control_attributes_are_explicit_and_stable() -> None:
+    assert Attr.REPLAY_INPUT_DESCRIPTOR == "debrix.replay.input_descriptor"
+    assert Attr.CONTROL_INPUT_PROVENANCE == "debrix.control.input_provenance"
+    assert Attr.CONTROL_RESULT_PROVENANCE == "debrix.control.result_provenance"
+
+
 def test_reexported_from_package_root() -> None:
     assert debrix.SpanKind is SpanKind
     assert debrix.Attr is Attr
