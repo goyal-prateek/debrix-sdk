@@ -500,6 +500,19 @@ def resolve_control(
             request.to_wire(),
             timeout=probe_timeout,
         )
+    except _ControlHttpError as error:
+        structured = _structured_error(error)
+        if structured is not None or (
+            400 <= error.status < 500 and error.status != 404
+        ):
+            raise DebrixControlProtocolError(
+                structured or str(error)
+            ) from error
+        logger.debug(
+            "Control probe endpoint is unavailable; continuing unmanaged",
+            exc_info=True,
+        )
+        return ControlUnmanaged()
     except _ControlTransportError:
         logger.debug(
             "Control probe unavailable; continuing unmanaged",

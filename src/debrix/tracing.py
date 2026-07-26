@@ -23,7 +23,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import Tracer
 
 from debrix.config import configure
-from debrix.control import ControlInvoke
+from debrix.control import ControlInvoke, ControlUnmanaged
 from debrix.mocks import (
     MockDecision,
     MockToolError,
@@ -36,6 +36,7 @@ from debrix.runtime_control import (
     apply_runtime_control,
     apply_runtime_invoke,
     capture_bound_call,
+    is_live_control_trace,
     mark_live_span,
     resolve_runtime_control,
     resolve_runtime_control_async,
@@ -65,8 +66,27 @@ R = TypeVar("R")
 _TRACER_NAME = "debrix"
 _SKIP_BOUND_PARAMS = frozenset({"self", "cls"})
 _AGENT_NAME_KEY = otel_context.create_key("debrix.agent.name")
-# Agent-scoped tool/MCP sequence for deterministic replay tapes.
-_REPLAY_SEQUENCE: ContextVar[int] = ContextVar("debrix.replay.sequence", default=0)
+
+
+class _ReplaySequenceState:
+    """Mutable trace-scoped counter shared by copied async contexts."""
+
+    __slots__ = ("next_index",)
+
+    def __init__(self) -> None:
+        self.next_index = 0
+
+    def allocate(self) -> int:
+        index = self.next_index
+        self.next_index += 1
+        return index
+
+
+# A mutable value is intentional: child asyncio contexts copy the ContextVar
+# binding but continue allocating from the same trace-wide sequence.
+_REPLAY_SEQUENCE: ContextVar[_ReplaySequenceState | None] = ContextVar(
+    "debrix.replay.sequence", default=None
+)
 
 
 def current_agent_name() -> str | None:
@@ -76,10 +96,12 @@ def current_agent_name() -> str | None:
 
 
 def next_replay_sequence_index() -> int:
-    """Allocate the next ``debrix.replay.sequence_index`` in this context."""
-    idx = _REPLAY_SEQUENCE.get()
-    _REPLAY_SEQUENCE.set(idx + 1)
-    return idx
+    """Allocate the next trace-wide ``debrix.replay.sequence_index``."""
+    state = _REPLAY_SEQUENCE.get()
+    if state is None:
+        state = _ReplaySequenceState()
+        _REPLAY_SEQUENCE.set(state)
+    return state.allocate()
 
 
 def get_tracer() -> Tracer:
@@ -159,12 +181,13 @@ def trace_span(
     agent_token: object | None = None
     seq_token = None
     if kind == SpanKind.AGENT:
+        is_root_agent = current_agent_name() is None
         agent_name = attrs.get(Attr.AGENT_NAME) or name
         agent_token = otel_context.attach(
             otel_context.set_value(_AGENT_NAME_KEY, agent_name)
         )
-        # Reset tool/MCP sequence for each agent boundary.
-        seq_token = _REPLAY_SEQUENCE.set(0)
+        if is_root_agent:
+            seq_token = _REPLAY_SEQUENCE.set(_ReplaySequenceState())
     wrapper = DebrixSpan(span)
     exc: BaseException | None = None
     verification_token = None
@@ -203,11 +226,13 @@ async def _trace_span_async(
     agent_token: object | None = None
     seq_token = None
     if kind == SpanKind.AGENT:
+        is_root_agent = current_agent_name() is None
         agent_name = attrs.get(Attr.AGENT_NAME) or name
         agent_token = otel_context.attach(
             otel_context.set_value(_AGENT_NAME_KEY, agent_name)
         )
-        seq_token = _REPLAY_SEQUENCE.set(0)
+        if is_root_agent:
+            seq_token = _REPLAY_SEQUENCE.set(_ReplaySequenceState())
     wrapper = DebrixSpan(span)
     exc: BaseException | None = None
     verification_token = None
@@ -319,21 +344,29 @@ def _wrap_function(
                 )
                 if not managed:
                     mark_live_span(span)
+                live_execution = is_live_control_trace(span)
                 if span_kind == SpanKind.TOOL and sequence_index is not None:
                     if not managed:
-                        controlled = await resolve_runtime_control_async(
-                            span,
-                            operation_kind="tool",
-                            operation_name=span_name,
-                            operation_server=None,
-                            agent_scope=current_agent_name(),
-                            sequence_index=sequence_index,
-                            input_value=bound,
-                            input_descriptor=(
-                                captured_call.descriptor
-                                if captured_call is not None
-                                else None
-                            ),
+                        controlled = (
+                            ControlUnmanaged()
+                            if live_execution and captured_call is None
+                            else await resolve_runtime_control_async(
+                                span,
+                                operation_kind="tool",
+                                operation_name=span_name,
+                                operation_server=None,
+                                agent_scope=current_agent_name(),
+                                sequence_index=sequence_index,
+                                input_value=bound,
+                                input_descriptor=(
+                                    captured_call.descriptor
+                                    if captured_call is not None
+                                    else None
+                                ),
+                                capabilities=(
+                                    ("input",) if live_execution else None
+                                ),
+                            )
                         )
                         if isinstance(controlled, ControlInvoke):
                             invoke_args, invoke_kwargs = apply_runtime_invoke(
@@ -345,6 +378,22 @@ def _wrap_function(
                             span.set_attribute(
                                 Attr.REPLAY_OUTPUT, _dumps_replay(result)
                             )
+                            if is_live_control_trace(span):
+                                post_control = await resolve_runtime_control_async(
+                                    span,
+                                    operation_kind="tool",
+                                    operation_name=span_name,
+                                    operation_server=None,
+                                    agent_scope=current_agent_name(),
+                                    sequence_index=sequence_index,
+                                    input_value={"kind": "result", "value": result},
+                                    capabilities=("result", "error"),
+                                )
+                                handled, controlled_result = apply_runtime_control(
+                                    span, post_control
+                                )
+                                if handled:
+                                    result = controlled_result
                             return result
                         handled, result = apply_runtime_control(
                             span, controlled
@@ -387,6 +436,26 @@ def _wrap_function(
                     span.set_attribute(
                         Attr.REPLAY_OUTPUT, _dumps_replay(result)
                     )
+                if (
+                    span_kind == SpanKind.TOOL
+                    and sequence_index is not None
+                    and live_execution
+                ):
+                    post_control = await resolve_runtime_control_async(
+                        span,
+                        operation_kind="tool",
+                        operation_name=span_name,
+                        operation_server=None,
+                        agent_scope=current_agent_name(),
+                        sequence_index=sequence_index,
+                        input_value={"kind": "result", "value": result},
+                        capabilities=("result", "error"),
+                    )
+                    handled, controlled_result = apply_runtime_control(
+                        span, post_control
+                    )
+                    if handled:
+                        result = controlled_result
                 return result
 
         return cast(Callable[P, R], async_wrapper)
@@ -423,21 +492,27 @@ def _wrap_function(
             )
             if not managed:
                 mark_live_span(span)
+            live_execution = is_live_control_trace(span)
             if span_kind == SpanKind.TOOL and sequence_index is not None:
                 if not managed:
-                    controlled = resolve_runtime_control(
-                        span,
-                        operation_kind="tool",
-                        operation_name=span_name,
-                        operation_server=None,
-                        agent_scope=current_agent_name(),
-                        sequence_index=sequence_index,
-                        input_value=bound,
-                        input_descriptor=(
-                            captured_call.descriptor
-                            if captured_call is not None
-                            else None
-                        ),
+                    controlled = (
+                        ControlUnmanaged()
+                        if live_execution and captured_call is None
+                        else resolve_runtime_control(
+                            span,
+                            operation_kind="tool",
+                            operation_name=span_name,
+                            operation_server=None,
+                            agent_scope=current_agent_name(),
+                            sequence_index=sequence_index,
+                            input_value=bound,
+                            input_descriptor=(
+                                captured_call.descriptor
+                                if captured_call is not None
+                                else None
+                            ),
+                            capabilities=(("input",) if live_execution else None),
+                        )
                     )
                     if isinstance(controlled, ControlInvoke):
                         invoke_args, invoke_kwargs = apply_runtime_invoke(
@@ -448,6 +523,22 @@ def _wrap_function(
                             span.set_attribute(
                                 Attr.REPLAY_OUTPUT, _dumps_replay(result)
                             )
+                        if is_live_control_trace(span):
+                            post_control = resolve_runtime_control(
+                                span,
+                                operation_kind="tool",
+                                operation_name=span_name,
+                                operation_server=None,
+                                agent_scope=current_agent_name(),
+                                sequence_index=sequence_index,
+                                input_value={"kind": "result", "value": result},
+                                capabilities=("result", "error"),
+                            )
+                            handled, controlled_result = apply_runtime_control(
+                                span, post_control
+                            )
+                            if handled:
+                                result = controlled_result
                         return cast(R, result)
                     handled, result = apply_runtime_control(span, controlled)
                     if handled:
@@ -483,8 +574,30 @@ def _wrap_function(
                     return cast(R, result)
             result = fn(*args, **kwargs)
             if capture_io:
-                span.set_attribute(Attr.REPLAY_OUTPUT, _dumps_replay(result))
-            return result
+                span.set_attribute(
+                    Attr.REPLAY_OUTPUT, _dumps_replay(result)
+                )
+            if (
+                span_kind == SpanKind.TOOL
+                and sequence_index is not None
+                and live_execution
+            ):
+                post_control = resolve_runtime_control(
+                    span,
+                    operation_kind="tool",
+                    operation_name=span_name,
+                    operation_server=None,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value={"kind": "result", "value": result},
+                    capabilities=("result", "error"),
+                )
+                handled, controlled_result = apply_runtime_control(
+                    span, post_control
+                )
+                if handled:
+                    result = controlled_result
+            return cast(R, result)
 
     return sync_wrapper
 

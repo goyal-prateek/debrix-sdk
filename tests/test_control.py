@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import threading
 import urllib.error
@@ -295,6 +296,37 @@ def test_unreachable_probe_is_safely_unmanaged() -> None:
     )
 
     assert isinstance(result, ControlUnmanaged)
+
+
+def test_structured_probe_rejection_is_not_treated_as_unmanaged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = json.dumps(
+        {
+            "error": {
+                "code": "sdk_incompatible",
+                "message": "descriptor mismatch",
+            }
+        }
+    ).encode()
+    scripted_urlopen(
+        monkeypatch,
+        [
+            urllib.error.HTTPError(
+                "http://127.0.0.1:17418/v1/control/probe",
+                409,
+                "Conflict",
+                {},
+                io.BytesIO(body),
+            )
+        ],
+    )
+
+    with pytest.raises(
+        DebrixControlProtocolError,
+        match="sdk_incompatible: descriptor mismatch",
+    ):
+        resolve_control(request(), endpoint="http://127.0.0.1:17418")
 
 
 def test_claimed_resolution_retries_same_request_after_wait_and_transport_loss(

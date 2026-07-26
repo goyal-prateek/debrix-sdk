@@ -562,6 +562,13 @@ def mark_live_span(span: DebrixSpan) -> None:
     span.set_attribute(Attr.CONTROL_PROVENANCE, "live")
 
 
+def is_live_control_trace(span: DebrixSpan) -> bool:
+    """Return whether this span belongs to an execution after its first edit."""
+
+    execution = _LIVE_EXECUTION.get()
+    return execution is not None and execution.trace_id == span.trace_id_hex
+
+
 def apply_runtime_invoke(
     span: DebrixSpan,
     decision: ControlInvoke,
@@ -577,18 +584,18 @@ def apply_runtime_invoke(
         raise DebrixControlProtocolError(
             "input control must capture the live operation result"
         )
-    if decision.input.provenance not in {"recorded", "edited"}:
+    if decision.input.provenance not in {"recorded", "edited", "live"}:
         raise DebrixControlProtocolError(
-            "input control provenance must be recorded or edited"
+            "input control provenance must be recorded, edited, or live"
         )
     if not isinstance(decision.input.value, Mapping):
         raise DebrixControlProtocolError("controlled input must be a JSON object")
     if (
-        decision.input.provenance == "recorded"
+        decision.input.provenance in {"recorded", "live"}
         and decision.input.value != captured.recorded_input
     ):
         raise DebrixControlProtocolError(
-            "Recorded input must use the exact baseline value"
+            "Unchanged input must use the exact runtime value"
         )
     try:
         args, kwargs = captured.reconstruct(decision.input.value)
@@ -605,13 +612,14 @@ def apply_runtime_invoke(
         Attr.REPLAY_INPUT,
         json.dumps(_json_safe(decision.input.value), ensure_ascii=False),
     )
-    _LIVE_EXECUTION.set(
-        _LiveExecution(
-            trace_id=span.trace_id_hex,
-            branch_id=decision.branch_id,
-            attempt_id=decision.attempt_id,
+    if decision.input.provenance == "edited":
+        _LIVE_EXECUTION.set(
+            _LiveExecution(
+                trace_id=span.trace_id_hex,
+                branch_id=decision.branch_id,
+                attempt_id=decision.attempt_id,
+            )
         )
-    )
     return args, kwargs
 
 
@@ -631,15 +639,15 @@ def apply_mapping_invoke(
         raise DebrixControlProtocolError(
             "input control must capture the live operation result"
         )
-    if decision.input.provenance not in {"recorded", "edited"}:
+    if decision.input.provenance not in {"recorded", "edited", "live"}:
         raise DebrixControlProtocolError(
-            "input control provenance must be recorded or edited"
+            "input control provenance must be recorded, edited, or live"
         )
     if not isinstance(decision.input.value, Mapping):
         raise DebrixControlProtocolError("controlled input must be a JSON object")
-    if decision.input.provenance == "recorded" and decision.input.value != recorded:
+    if decision.input.provenance in {"recorded", "live"} and decision.input.value != recorded:
         raise DebrixControlProtocolError(
-            "Recorded input must use the exact baseline value"
+            "Unchanged input must use the exact runtime value"
         )
     candidate = dict(decision.input.value)
     if set(candidate) != set(recorded):
@@ -677,13 +685,14 @@ def apply_mapping_invoke(
         Attr.REPLAY_INPUT,
         json.dumps(_json_safe(candidate), ensure_ascii=False),
     )
-    _LIVE_EXECUTION.set(
-        _LiveExecution(
-            trace_id=span.trace_id_hex,
-            branch_id=decision.branch_id,
-            attempt_id=decision.attempt_id,
+    if decision.input.provenance == "edited":
+        _LIVE_EXECUTION.set(
+            _LiveExecution(
+                trace_id=span.trace_id_hex,
+                branch_id=decision.branch_id,
+                attempt_id=decision.attempt_id,
+            )
         )
-    )
     return candidate
 
 
@@ -702,20 +711,20 @@ def apply_llm_messages_invoke(
         raise DebrixControlProtocolError(
             "message control must capture the live model result"
         )
-    if decision.input.provenance not in {"recorded", "edited"}:
+    if decision.input.provenance not in {"recorded", "edited", "live"}:
         raise DebrixControlProtocolError(
-            "message control provenance must be recorded or edited"
+            "message control provenance must be recorded, edited, or live"
         )
     if not isinstance(decision.input.value, Mapping):
         raise DebrixControlProtocolError(
             "controlled messages must be a JSON object"
         )
     if (
-        decision.input.provenance == "recorded"
+        decision.input.provenance in {"recorded", "live"}
         and decision.input.value != captured.recorded_input
     ):
         raise DebrixControlProtocolError(
-            "Recorded messages must use the exact baseline value"
+            "Unchanged messages must use the exact runtime value"
         )
     try:
         messages = captured.reconstruct(decision.input.value)
@@ -728,13 +737,14 @@ def apply_llm_messages_invoke(
     span.set_attribute(Attr.CONTROL_PROVENANCE, decision.input.provenance)
     span.set_attribute(Attr.CONTROL_INPUT_PROVENANCE, decision.input.provenance)
     span.set_attribute(Attr.CONTROL_RESULT_PROVENANCE, "live")
-    _LIVE_EXECUTION.set(
-        _LiveExecution(
-            trace_id=span.trace_id_hex,
-            branch_id=decision.branch_id,
-            attempt_id=decision.attempt_id,
+    if decision.input.provenance == "edited":
+        _LIVE_EXECUTION.set(
+            _LiveExecution(
+                trace_id=span.trace_id_hex,
+                branch_id=decision.branch_id,
+                attempt_id=decision.attempt_id,
+            )
         )
-    )
     return messages
 
 
@@ -744,9 +754,9 @@ def apply_llm_model_output_return(
 ) -> dict[str, Any]:
     """Validate and return one complete controlled model response object."""
 
-    if decision.output.provenance not in {"recorded", "edited"}:
+    if decision.output.provenance not in {"recorded", "edited", "live"}:
         raise DebrixControlProtocolError(
-            "model-output provenance must be recorded or edited"
+            "model-output provenance must be recorded, edited, or live"
         )
     if decision.output.kind != "result":
         raise DebrixControlProtocolError(
@@ -775,7 +785,7 @@ def apply_llm_model_output_return(
     span.set_attribute(
         Attr.CONTROL_RESULT_PROVENANCE, decision.output.provenance
     )
-    if decision.live_suffix:
+    if decision.live_suffix and decision.output.provenance == "edited":
         _LIVE_EXECUTION.set(
             _LiveExecution(
                 trace_id=span.trace_id_hex,
@@ -810,7 +820,7 @@ def apply_runtime_control(
     span.set_attribute(Attr.CONTROL_ATTEMPT_ID, decision.attempt_id)
     span.set_attribute(Attr.CONTROL_OCCURRENCE_ID, decision.occurrence_id)
     span.set_attribute(Attr.CONTROL_PROVENANCE, decision.output.provenance)
-    if decision.live_suffix:
+    if decision.live_suffix and decision.output.provenance == "edited":
         _LIVE_EXECUTION.set(
             _LiveExecution(
                 trace_id=span.trace_id_hex,

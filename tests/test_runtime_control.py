@@ -394,15 +394,18 @@ def test_sync_tool_invoke_reconstructs_arguments_and_calls_real_once(
     with (
         patch(
             "debrix.tracing.resolve_runtime_control",
-            return_value=invoked(
-                {
-                    "positional": 10,
-                    "regular": "edited",
-                    "items": [20, 30],
-                    "enabled": False,
-                    "options": {"region": "east"},
-                }
-            ),
+            side_effect=[
+                invoked(
+                    {
+                        "positional": 10,
+                        "regular": "edited",
+                        "items": [20, 30],
+                        "enabled": False,
+                        "options": {"region": "east"},
+                    }
+                ),
+                ControlUnmanaged(),
+            ],
         ) as control,
         patch("debrix.tracing.resolve_mock") as mock_resolver,
     ):
@@ -412,7 +415,7 @@ def test_sync_tool_invoke_reconstructs_arguments_and_calls_real_once(
 
     assert calls == [(10, "edited", (20, 30), False, {"region": "east"})]
     mock_resolver.assert_not_called()
-    request = control.call_args.kwargs
+    request = control.call_args_list[0].kwargs
     assert request["input_descriptor"]["schemaVersion"] == 1
     assert request["input_value"]["positional"] == 1
     attrs = memory_exporter.get_finished_spans()[0].attributes
@@ -464,10 +467,12 @@ def test_sync_method_input_keeps_self_and_class_receivers_immutable() -> None:
 
     with patch(
         "debrix.tracing.resolve_runtime_control",
-        side_effect=[
-            invoked({"query": "edited-instance"}),
-            invoked({"query": "edited-class"}),
-        ],
+            side_effect=[
+                invoked({"query": "edited-instance"}),
+                ControlUnmanaged(),
+                invoked({"query": "edited-class"}),
+                ControlUnmanaged(),
+            ],
     ):
         assert Worker().lookup("recorded") == "instance:edited-instance"
         assert Worker.class_lookup("recorded") == "Worker:edited-class"
@@ -492,7 +497,10 @@ def test_async_tool_input_invokes_once_without_blocking_the_event_loop() -> None
 
         with patch(
             "debrix.tracing.resolve_runtime_control_async",
-            return_value=invoked({"query": "edited"}),
+            side_effect=[
+                invoked({"query": "edited"}),
+                ControlUnmanaged(),
+            ],
         ):
             result, _ = await asyncio.gather(lookup("recorded"), tick())
         assert result == "live:edited"
@@ -618,7 +626,12 @@ def test_live_suffix_marks_later_operation_and_runs_it_once(
         patch(
             "debrix.tracing.resolve_runtime_control",
             side_effect=[
-                returned(value="recorded", live_suffix=True),
+                returned(
+                    provenance="edited",
+                    value="recorded",
+                    live_suffix=True,
+                ),
+                ControlUnmanaged(),
                 ControlUnmanaged(),
             ],
         ),
@@ -631,7 +644,7 @@ def test_live_suffix_marks_later_operation_and_runs_it_once(
         span.name: span
         for span in memory_exporter.get_finished_spans()
     }
-    assert spans["selected"].attributes[Attr.CONTROL_PROVENANCE] == "recorded"
+    assert spans["selected"].attributes[Attr.CONTROL_PROVENANCE] == "edited"
     assert spans["downstream"].attributes[Attr.CONTROL_PROVENANCE] == "live"
     assert spans["downstream"].attributes[Attr.CONTROL_ATTEMPT_ID] == (
         "branch_attempt_123"

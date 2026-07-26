@@ -24,6 +24,7 @@ from debrix.runtime_control import (
     apply_mapping_invoke,
     apply_runtime_control,
     capture_mapping_input,
+    is_live_control_trace,
     mark_live_span,
     resolve_runtime_control,
     resolve_runtime_control_async,
@@ -177,6 +178,7 @@ class MockableClient:
             managed = check_boundary_sync(span)
             if not managed:
                 mark_live_span(span)
+                live_execution = is_live_control_trace(span)
                 controlled = resolve_runtime_control(
                     span,
                     operation_kind="mcp",
@@ -190,6 +192,7 @@ class MockableClient:
                         if captured_input is not None
                         else None
                     ),
+                    capabilities=(("input",) if live_execution else None),
                 )
                 if isinstance(controlled, ControlInvoke):
                     invoked_args = apply_mapping_invoke(
@@ -204,6 +207,23 @@ class MockableClient:
                     span.set_attribute(
                         Attr.REPLAY_OUTPUT, _dumps_replay(result)
                     )
+                    if is_live_control_trace(span):
+                        post_control = resolve_runtime_control(
+                            span,
+                            operation_kind="mcp",
+                            operation_name=name,
+                            operation_server=server,
+                            agent_scope=current_agent_name(),
+                            sequence_index=sequence_index,
+                            input_value={"kind": "result", "value": result},
+                            capabilities=("result", "error"),
+                            endpoint=self._endpoint,
+                        )
+                        handled, controlled_result = apply_runtime_control(
+                            span, post_control
+                        )
+                        if handled:
+                            result = controlled_result
                     return result
                 handled, result = apply_runtime_control(span, controlled)
                 if handled:
@@ -237,6 +257,23 @@ class MockableClient:
                 name, args, forward_kwargs, keyword_arguments
             )
             span.set_attribute(Attr.REPLAY_OUTPUT, _dumps_replay(result))
+            if not managed and is_live_control_trace(span):
+                post_control = resolve_runtime_control(
+                    span,
+                    operation_kind="mcp",
+                    operation_name=name,
+                    operation_server=server,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value={"kind": "result", "value": result},
+                    capabilities=("result", "error"),
+                    endpoint=self._endpoint,
+                )
+                handled, controlled_result = apply_runtime_control(
+                    span, post_control
+                )
+                if handled:
+                    result = controlled_result
             return result
 
     async def _call_tool_async(
@@ -272,6 +309,7 @@ class MockableClient:
             managed = await check_boundary_async(span)
             if not managed:
                 mark_live_span(span)
+                live_execution = is_live_control_trace(span)
                 controlled = await resolve_runtime_control_async(
                     span,
                     operation_kind="mcp",
@@ -285,6 +323,7 @@ class MockableClient:
                         if captured_input is not None
                         else None
                     ),
+                    capabilities=(("input",) if live_execution else None),
                 )
                 if isinstance(controlled, ControlInvoke):
                     invoked_args = apply_mapping_invoke(
@@ -299,6 +338,23 @@ class MockableClient:
                     span.set_attribute(
                         Attr.REPLAY_OUTPUT, _dumps_replay(result)
                     )
+                    if is_live_control_trace(span):
+                        post_control = await resolve_runtime_control_async(
+                            span,
+                            operation_kind="mcp",
+                            operation_name=name,
+                            operation_server=server,
+                            agent_scope=current_agent_name(),
+                            sequence_index=sequence_index,
+                            input_value={"kind": "result", "value": result},
+                            capabilities=("result", "error"),
+                            endpoint=self._endpoint,
+                        )
+                        handled, controlled_result = apply_runtime_control(
+                            span, post_control
+                        )
+                        if handled:
+                            result = controlled_result
                     return result
                 handled, result = apply_runtime_control(span, controlled)
                 if handled:
@@ -332,4 +388,21 @@ class MockableClient:
                 name, args, forward_kwargs, keyword_arguments
             )
             span.set_attribute(Attr.REPLAY_OUTPUT, _dumps_replay(result))
+            if not managed and is_live_control_trace(span):
+                post_control = await resolve_runtime_control_async(
+                    span,
+                    operation_kind="mcp",
+                    operation_name=name,
+                    operation_server=server,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value={"kind": "result", "value": result},
+                    capabilities=("result", "error"),
+                    endpoint=self._endpoint,
+                )
+                handled, controlled_result = apply_runtime_control(
+                    span, post_control
+                )
+                if handled:
+                    result = controlled_result
             return result
