@@ -21,6 +21,7 @@ from debrix.runtime_control import (
     apply_llm_messages_invoke,
     apply_llm_model_output_return,
     capture_llm_messages,
+    is_live_control_trace,
     mark_live_span,
     resolve_runtime_control,
     resolve_runtime_control_async,
@@ -153,20 +154,25 @@ def complete(
         )
         effective_messages = recorded_messages
         managed = check_boundary_sync(span)
+        live_execution = is_live_control_trace(span)
         if not managed:
             mark_live_span(span)
             controlled = resolve_runtime_control(
-                span,
-                operation_kind="llm",
-                operation_name=name,
-                operation_server=None,
-                agent_scope=current_agent_name(),
-                sequence_index=sequence_index,
-                input_value=captured.recorded_input,
-                input_descriptor=captured.descriptor,
-                capabilities=("messages", "model_output"),
-                endpoint=endpoint,
-            )
+                    span,
+                    operation_kind="llm",
+                    operation_name=name,
+                    operation_server=None,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value=captured.recorded_input,
+                    input_descriptor=captured.descriptor,
+                    capabilities=(
+                        ("messages",)
+                        if live_execution
+                        else ("messages", "model_output")
+                    ),
+                    endpoint=endpoint,
+                )
             if isinstance(controlled, ControlReturn):
                 response = apply_llm_model_output_return(span, controlled)
                 return _record_response(span, response)
@@ -188,6 +194,19 @@ def complete(
                         "message invocation"
                     )
                 response = _live_response(call(effective_messages))
+                post_control = resolve_runtime_control(
+                    span,
+                    operation_kind="llm",
+                    operation_name=name,
+                    operation_server=None,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value={"kind": "result", "value": response},
+                    capabilities=("model_output",),
+                    endpoint=endpoint,
+                )
+                if isinstance(post_control, ControlReturn):
+                    response = apply_llm_model_output_return(span, post_control)
                 return _record_response(span, response)
 
             mock_decision = resolve_mock(
@@ -210,10 +229,22 @@ def complete(
                 "callable, e.g. call=my_provider."
             )
 
-        return _record_response(
-            span,
-            _live_response(call(effective_messages)),
-        )
+        response = _live_response(call(effective_messages))
+        if live_execution:
+            post_control = resolve_runtime_control(
+                span,
+                operation_kind="llm",
+                operation_name=name,
+                operation_server=None,
+                agent_scope=current_agent_name(),
+                sequence_index=sequence_index,
+                input_value={"kind": "result", "value": response},
+                capabilities=("model_output",),
+                endpoint=endpoint,
+            )
+            if isinstance(post_control, ControlReturn):
+                response = apply_llm_model_output_return(span, post_control)
+        return _record_response(span, response)
 
 
 async def acomplete(
@@ -231,20 +262,25 @@ async def acomplete(
         )
         effective_messages = recorded_messages
         managed = await check_boundary_async(span)
+        live_execution = is_live_control_trace(span)
         if not managed:
             mark_live_span(span)
             controlled = await resolve_runtime_control_async(
-                span,
-                operation_kind="llm",
-                operation_name=name,
-                operation_server=None,
-                agent_scope=current_agent_name(),
-                sequence_index=sequence_index,
-                input_value=captured.recorded_input,
-                input_descriptor=captured.descriptor,
-                capabilities=("messages", "model_output"),
-                endpoint=endpoint,
-            )
+                    span,
+                    operation_kind="llm",
+                    operation_name=name,
+                    operation_server=None,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value=captured.recorded_input,
+                    input_descriptor=captured.descriptor,
+                    capabilities=(
+                        ("messages",)
+                        if live_execution
+                        else ("messages", "model_output")
+                    ),
+                    endpoint=endpoint,
+                )
             if isinstance(controlled, ControlReturn):
                 response = apply_llm_model_output_return(span, controlled)
                 return _record_response(span, response)
@@ -266,6 +302,19 @@ async def acomplete(
                         "message invocation"
                     )
                 response = _live_response(await call(effective_messages))
+                post_control = await resolve_runtime_control_async(
+                    span,
+                    operation_kind="llm",
+                    operation_name=name,
+                    operation_server=None,
+                    agent_scope=current_agent_name(),
+                    sequence_index=sequence_index,
+                    input_value={"kind": "result", "value": response},
+                    capabilities=("model_output",),
+                    endpoint=endpoint,
+                )
+                if isinstance(post_control, ControlReturn):
+                    response = apply_llm_model_output_return(span, post_control)
                 return _record_response(span, response)
 
             mock_decision = resolve_mock(
@@ -287,7 +336,19 @@ async def acomplete(
                 "passthrough (no armed LLM replay/mock). Pass an async live "
                 "provider callable."
             )
-        return _record_response(
-            span,
-            _live_response(await call(effective_messages)),
-        )
+        response = _live_response(await call(effective_messages))
+        if live_execution:
+            post_control = await resolve_runtime_control_async(
+                span,
+                operation_kind="llm",
+                operation_name=name,
+                operation_server=None,
+                agent_scope=current_agent_name(),
+                sequence_index=sequence_index,
+                input_value={"kind": "result", "value": response},
+                capabilities=("model_output",),
+                endpoint=endpoint,
+            )
+            if isinstance(post_control, ControlReturn):
+                response = apply_llm_model_output_return(span, post_control)
+        return _record_response(span, response)

@@ -83,6 +83,93 @@ def test_agent_tool_llm_nesting(memory_exporter: InMemorySpanExporter) -> None:
     )
 
 
+def test_nested_agents_share_one_trace_wide_replay_sequence(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    @trace_tool(name="root_lookup")
+    def root_lookup() -> str:
+        return "root"
+
+    @trace_tool(name="child_lookup")
+    def child_lookup() -> str:
+        return "child"
+
+    @trace_agent(name="child_agent")
+    def child_agent() -> str:
+        return child_lookup()
+
+    @trace_agent(name="coordinator")
+    def coordinator() -> None:
+        root_lookup()
+        child_agent()
+        root_lookup()
+
+    coordinator()
+
+    controlled = [
+        span
+        for span in memory_exporter.get_finished_spans()
+        if span.attributes.get(Attr.SPAN_KIND) == SpanKind.TOOL
+    ]
+    sequence_by_start = [
+        span.attributes[Attr.REPLAY_SEQUENCE_INDEX]
+        for span in sorted(controlled, key=lambda span: span.start_time)
+    ]
+    assert sequence_by_start == [0, 1, 2]
+
+
+def test_separate_root_agents_each_start_a_new_replay_sequence(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    @trace_tool(name="lookup")
+    def lookup() -> str:
+        return "ok"
+
+    @trace_agent(name="coordinator")
+    def coordinator() -> None:
+        lookup()
+
+    coordinator()
+    coordinator()
+
+    tool_spans = [
+        span
+        for span in memory_exporter.get_finished_spans()
+        if span.attributes.get(Attr.SPAN_KIND) == SpanKind.TOOL
+    ]
+    assert [
+        span.attributes[Attr.REPLAY_SEQUENCE_INDEX] for span in tool_spans
+    ] == [0, 0]
+
+
+def test_concurrent_nested_agents_allocate_unique_replay_sequences(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    @trace_tool(name="lookup")
+    async def lookup(label: str) -> str:
+        await asyncio.sleep(0)
+        return label
+
+    @trace_agent(name="child_agent")
+    async def child_agent(label: str) -> str:
+        return await lookup(label)
+
+    @trace_agent(name="coordinator")
+    async def coordinator() -> None:
+        await asyncio.gather(child_agent("a"), child_agent("b"))
+
+    asyncio.run(coordinator())
+
+    tool_spans = [
+        span
+        for span in memory_exporter.get_finished_spans()
+        if span.attributes.get(Attr.SPAN_KIND) == SpanKind.TOOL
+    ]
+    assert sorted(
+        span.attributes[Attr.REPLAY_SEQUENCE_INDEX] for span in tool_spans
+    ) == [0, 1]
+
+
 def test_record_messages_and_response_round_trip(
     memory_exporter: InMemorySpanExporter,
 ) -> None:

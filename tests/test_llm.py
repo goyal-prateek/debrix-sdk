@@ -17,6 +17,7 @@ from debrix.control import (
     ControlResolvedInput,
     ControlResolvedValue,
     ControlReturn,
+    ControlUnmanaged,
     DebrixBreakpointCancelled,
 )
 from debrix.llm import acomplete, complete
@@ -159,7 +160,7 @@ def test_complete_controlled_messages_call_provider_exactly_once(
     with (
         patch(
             "debrix.llm.resolve_runtime_control",
-            return_value=message_invoke(edited),
+            side_effect=[message_invoke(edited), ControlUnmanaged()],
         ) as control,
         patch("debrix.llm.resolve_mock") as mock,
     ):
@@ -184,9 +185,13 @@ def test_complete_controlled_messages_call_provider_exactly_once(
     assert out == "from-provider"
     assert calls == [edited["messages"]]
     mock.assert_not_called()
-    request = control.call_args.kwargs
+    assert control.call_count == 2
+    request = control.call_args_list[0].kwargs
     assert request["capabilities"] == ("messages", "model_output")
     assert request["input_descriptor"]["operationKind"] == "llm"
+    post_request = control.call_args_list[1].kwargs
+    assert post_request["capabilities"] == ("model_output",)
+    assert post_request["input_value"]["value"]["content"] == "from-provider"
     span = memory_exporter.get_finished_spans()[0]
     assert span.attributes[Attr.CONTROL_INPUT_PROVENANCE] == "edited"
     assert span.attributes[Attr.CONTROL_RESULT_PROVENANCE] == "live"
@@ -225,6 +230,65 @@ def test_complete_controlled_model_output_skips_provider_and_mock(
     span = memory_exporter.get_finished_spans()[0]
     assert span.attributes[Attr.CONTROL_RESULT_PROVENANCE] == "edited"
     assert json.loads(span.attributes[Attr.RESPONSE]) == response
+
+
+def test_downstream_model_output_runs_live_after_an_earlier_edit(
+    memory_exporter: InMemorySpanExporter,
+) -> None:
+    provider_calls: list[list[dict[str, object]]] = []
+    live_response = {
+        "content": "live downstream answer",
+        "model": "live-model",
+        "usage": {"input_tokens": 7, "output_tokens": 3},
+    }
+
+    def provider(
+        messages: list[dict[str, object]],
+    ) -> tuple[str, dict[str, int], str]:
+        provider_calls.append(messages)
+        return (
+            str(live_response["content"]),
+            live_response["usage"],  # type: ignore[arg-type]
+            str(live_response["model"]),
+        )
+
+    @trace_agent(name="coordinator")
+    def run() -> tuple[str, str]:
+        edited = complete(
+            [{"role": "user", "content": "policy"}],
+            name="policy_interpret_result",
+            call=provider,
+        )
+        downstream = complete(
+            [{"role": "user", "content": edited}],
+            name="decide_support_resolution",
+            call=provider,
+        )
+        return edited, downstream
+
+    with patch(
+        "debrix.llm.resolve_runtime_control",
+        side_effect=[
+            model_return(
+                {
+                    "content": "edited policy",
+                    "model": "baseline-model",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }
+            ),
+            ControlUnmanaged(),
+            model_return(live_response, provenance="live"),
+        ],
+    ) as control:
+        assert run() == ("edited policy", "live downstream answer")
+
+    assert len(provider_calls) == 1
+    assert control.call_args_list[1].kwargs["capabilities"] == ("messages",)
+    assert control.call_args_list[2].kwargs["capabilities"] == ("model_output",)
+    assert control.call_args_list[2].kwargs["input_value"] == {
+        "kind": "result",
+        "value": live_response,
+    }
 
 
 def test_acomplete_controlled_messages_call_provider_exactly_once(

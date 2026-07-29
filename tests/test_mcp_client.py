@@ -157,7 +157,7 @@ def test_managed_mcp_input_invokes_edited_arguments_once_and_bypasses_mock(
     with (
         patch(
             "debrix.mcp.resolve_runtime_control",
-            return_value=_invoke({"q": "edited"}),
+            side_effect=[_invoke({"q": "edited"}), ControlUnmanaged()],
         ) as control,
         patch("debrix.mcp.resolve_mock") as mock_resolver,
     ):
@@ -167,7 +167,8 @@ def test_managed_mcp_input_invokes_edited_arguments_once_and_bypasses_mock(
 
     assert inner.calls == [("search", {"q": "edited"})]
     mock_resolver.assert_not_called()
-    assert control.call_args.kwargs["input_descriptor"] == {
+    assert control.call_count == 2
+    assert control.call_args_list[0].kwargs["input_descriptor"] == {
         "schemaVersion": 1,
         "operationKind": "mcp",
         "jsonKind": "object",
@@ -237,9 +238,12 @@ def test_async_managed_mcp_input_invokes_edited_arguments_once() -> None:
 
     async def run() -> None:
         with (
-            patch(
-                "debrix.mcp.resolve_runtime_control_async",
-                return_value=_invoke({"sql": "select edited"}),
+                patch(
+                    "debrix.mcp.resolve_runtime_control_async",
+                    side_effect=[
+                        _invoke({"sql": "select edited"}),
+                        ControlUnmanaged(),
+                    ],
             ),
             patch("debrix.mcp.resolve_mock") as mock_resolver,
         ):
