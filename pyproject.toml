@@ -1,6 +1,6 @@
 [project]
 name = "debrix"
-version = "0.1.0a4"
+version = "0.1.0b1"
 description = "Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools"
 readme = "README.md"
 license = "MIT"
@@ -8,7 +8,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Prateek Goyal", email = "gprateek015@gmail.com" }]
 keywords = ["observability", "opentelemetry", "agents", "tracing", "debrix"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",

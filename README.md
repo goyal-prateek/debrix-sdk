@@ -2,7 +2,7 @@
 
 Open-source instrumentation SDK for Debrix — local-first AI Agent DevTools.
 
-**Status:** alpha (`0.1.0a4`). APIs may change.
+**Status:** beta (`0.1.0b1`). APIs may change.
 
 Requires the Debrix desktop app running locally to receive traces (OTLP/HTTP on `localhost:17418`).
 
@@ -175,6 +175,6 @@ MIT
 Tag on `main` to publish to PyPI (GitHub Actions):
 
 ```bash
-git tag -a v0.1.0a4 -m "debrix 0.1.0a4"
-git push origin v0.1.0a4
+git tag -a v0.1.0b1 -m "debrix 0.1.0b1"
+git push origin v0.1.0b1
 ```

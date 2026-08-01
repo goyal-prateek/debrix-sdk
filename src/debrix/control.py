@@ -19,7 +19,7 @@ from typing import Any, Literal, Mapping
 from debrix.config import get_otlp_endpoint
 
 PROTOCOL_VERSION = 1
-SDK_VERSION = "0.1.0a4"
+SDK_VERSION = "0.1.0b1"
 logger = logging.getLogger("debrix.control")
 
 ControlProvenance = Literal["recorded", "edited", "live"]

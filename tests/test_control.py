@@ -46,7 +46,7 @@ def request() -> ControlRequest:
         input_value={"query": "current"},
         capabilities=("input", "result", "error"),
         execution_model="sync",
-        sdk_version="0.1.0a4",
+        sdk_version="0.1.0b1",
         input_descriptor={
             "schemaVersion": 1,
             "operationKind": "tool",
@@ -88,7 +88,7 @@ def test_request_wire_shape_is_stable_and_canonical() -> None:
         "capabilities": ["input", "result", "error"],
         "sdk": {
             "name": "debrix-python",
-            "version": "0.1.0a4",
+            "version": "0.1.0b1",
             "execution_model": "sync",
         },
     }
